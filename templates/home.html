@@ -1,0 +1,600 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="section-head">
+  <div>
+    <h1>Últimas Demandas Publicadas</h1>
+  </div>
+</section>
+
+<section class="card search-card">
+  <form action="/" method="get" class="search-grid search-grid-home {{ 'has-saved-filters' if current_user and saved_filters else '' }}">
+    {% if current_user and saved_filters %}
+      <div class="search-field-stack search-field-stack-filters">
+        <label>Mis filtros</label>
+        <div class="saved-filter-inline">
+          <select name="saved_filter_id" data-saved-filter-select>
+            <option value="">Mis filtros</option>
+            {% for item in saved_filters %}
+              <option value="{{ item.id }}" {{ 'selected' if current_saved_filter and current_saved_filter.id == item.id else '' }}>{{ item.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="search-field-stack">
+      <label>Palabras clave</label>
+      <div class="keyword-search" data-keyword-search="true">
+        <div class="keyword-search-input-wrap">
+          <input type="text" name="q" placeholder="Busca en el texto de la demanda" value="{{ search_filters.q }}" autocomplete="off" data-keyword-input>
+          <button type="button" class="keyword-search-clear" data-keyword-clear {% if not search_filters.q %}hidden{% endif %} aria-label="Limpiar palabras clave">×</button>
+        </div>
+        <div class="keyword-search-results" data-keyword-results hidden></div>
+      </div>
+    </div>
+
+    <div class="search-field-stack">
+      <label>Filtrar por ubicación</label>
+      <div class="search-grid-zone">
+        {% set input_name = "location" %}
+        {% set hidden_json_name = "location_zone_json" %}
+        {% set hidden_label_name = "location" %}
+        {% set zone_value = search_filters.location_zone %}
+        {% set map_id = "home-zone-map" %}
+        {% set zone_placeholder = "Cualquier ubicación" %}
+        {% set collapsible_map = false %}
+        {% set auto_submit_clear = true %}
+        {% set modal_mode = true %}
+        {% set zone_country_bias = "es" %}
+        {% set radius_options = [
+          {"value":"1","label":"1 km","radius_bucket":"1km"},
+          {"value":"2","label":"2 km","radius_bucket":"2km"},
+          {"value":"5","label":"5 km","radius_bucket":"5km"},
+          {"value":"10","label":"10 km","radius_bucket":"10km"},
+          {"value":"30","label":"30 km","radius_bucket":"30km"},
+          {"value":"50","label":"50 km","radius_bucket":"50km"},
+          {"value":"100","label":"100 km","radius_bucket":"100km"},
+          {"value":"200","label":"200 km","radius_bucket":"200km"},
+          {"value":"200_plus","label":"+200 km","radius_bucket":"200_plus"}
+        ] %}
+        {% include "_zone_selector.html" %}
+      </div>
+    </div>
+
+    <div class="search-submit-stack">
+      <button type="submit" class="button button-primary">Buscar</button>
+    </div>
+  </form>
+
+  {% if current_user and (current_saved_filter or show_save_search_actions) %}
+    <div class="filter-utility-bar">
+      {% if current_saved_filter %}
+        <div class="filter-utility-copy">
+          <span class="filter-active-pill">Filtro: {{ current_saved_filter.name }}</span>
+          {% if not search_matches_current_saved_filter %}
+            <span class="small-note">Has modificado la búsqueda.</span>
+          {% endif %}
+        </div>
+      {% endif %}
+      <button
+        type="button"
+        class="button button-ghost compact-pill"
+        data-filter-modal-open="true"
+      >
+        {% if current_saved_filter and show_save_search_actions %}
+          Guardar cambios
+        {% elif current_saved_filter %}
+          Gestionar filtro
+        {% else %}
+          Guardar filtro
+        {% endif %}
+      </button>
+    </div>
+
+    <div class="filter-modal" id="filter-modal" hidden>
+      <div class="filter-modal-backdrop" data-filter-modal-close="true"></div>
+      <div class="filter-modal-panel">
+        <div class="filter-modal-head">
+          <div>
+            <strong>
+              {% if current_saved_filter and show_save_search_actions %}
+                Guardar cambios del filtro
+              {% elif current_saved_filter %}
+                Gestionar filtro
+              {% else %}
+                Guardar filtro
+              {% endif %}
+            </strong>
+            <p class="small-note">
+              {% if current_saved_filter and show_save_search_actions %}
+                Puedes actualizar el filtro usado o guardar esta búsqueda como una variante nueva.
+              {% elif current_saved_filter %}
+                Puedes renombrarlo, actualizarlo o eliminarlo.
+              {% else %}
+                Guarda esta búsqueda para reutilizarla cuando quieras.
+              {% endif %}
+            </p>
+          </div>
+          <button type="button" class="filter-modal-close" data-filter-modal-close="true">Cerrar</button>
+        </div>
+
+        <div class="filter-modal-body">
+          <form action="/filters" method="post" class="filter-modal-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            {% if current_saved_filter %}
+              <input type="hidden" name="filter_id" value="{{ current_saved_filter.id }}">
+            {% endif %}
+            <input type="hidden" name="query_text" value="{{ search_filters.q }}">
+            <input type="hidden" name="location" value="{{ search_filters.location }}">
+            <input type="hidden" name="location_zone_json" value='{{ search_filters.location_zone_json }}'>
+            <input type="hidden" name="intent_type" value="{{ search_filters.intent_type }}">
+            <label class="search-field-stack">
+              <span>Nombre del filtro</span>
+              <input type="text" name="name" placeholder="Nombre del filtro" value="{{ current_saved_filter.name if current_saved_filter else '' }}" required>
+            </label>
+            <div class="filter-modal-actions">
+              {% if current_saved_filter %}
+                <button type="submit" name="save_mode" value="create" class="button button-ghost">Guardar como nuevo</button>
+                <button type="submit" name="save_mode" value="update" class="button button-primary">Actualizar filtro</button>
+              {% else %}
+                <button type="submit" name="save_mode" value="create" class="button button-primary">Guardar filtro</button>
+              {% endif %}
+            </div>
+          </form>
+
+          {% if current_saved_filter %}
+            <form action="/filters/{{ current_saved_filter.id }}/delete" method="post" class="filter-modal-danger">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="button button-ghost">Eliminar filtro</button>
+            </form>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  {% endif %}
+</section>
+
+<section class="home-results-head">
+  <p class="small-note">{{ demands|length }} demandas en esta página{% if pagination.total_pages > 1 %} · página {{ pagination.page }} de {{ pagination.total_pages }}{% endif %}</p>
+</section>
+
+<section class="demand-cards-grid">
+  {% for demand in demands %}
+    {% set demand_text = demand.normalized_payload.raw_text or demand.attributes.get("description", demand.summary) %}
+    {% set city_label = demand.location_display or demand.location or demand.location_label or "" %}
+    <article class="card demand-feed-card" id="demand-{{ demand.id }}">
+      <div class="demand-feed-main">
+        <div class="title-inline">
+          <h3>{{ demand_text[:100] }}{% if demand_text|length > 100 %}...{% endif %}</h3>
+          {% if debug_normalization %}
+            <button type="button" class="debug-json-trigger" data-json-target="normalized-demand-{{ demand.id }}" data-json-title="Normalized demand JSON · {{ demand.summary }}">json</button>
+          {% endif %}
+        </div>
+        <div class="demand-feed-meta">
+          <span class="owner-pill">
+            <span class="owner-icon" aria-hidden="true"></span>
+            <span>{{ (demand.owner_name or "Usuario")[:15] }}</span>
+          </span>
+          <span>{{ demand.created_at.strftime("%d/%m/%Y %H:%M") if demand.created_at else "" }}</span>
+          {% if demand.location_json and (demand.location_json.geojson or demand.location_json.bbox or (demand.location_json.center and demand.location_json.center.lat is not none and demand.location_json.center.lon is not none)) %}
+            <span class="location-pill">
+              <span class="location-icon" aria-hidden="true"></span>
+              <button
+                type="button"
+                class="location-map-link"
+                data-demand-map-toggle="demand-map-{{ demand.id }}"
+                aria-expanded="false"
+              >
+                {{ city_label }}
+              </button>
+            </span>
+          {% endif %}
+          <span>{{ demand.offer_count }} ofertas</span>
+        </div>
+      </div>
+
+      {% if demand.location_json and (demand.location_json.geojson or demand.location_json.bbox or (demand.location_json.center and demand.location_json.center.lat is not none and demand.location_json.center.lon is not none)) %}
+        <div class="inline-location-map" id="demand-map-{{ demand.id }}" hidden>
+          <div
+            class="readonly-demand-map"
+            data-readonly-map="true"
+            data-zone='{{ demand.location_json | tojson }}'
+            data-label="{{ demand.location_json.label or city_label }}"
+          ></div>
+        </div>
+      {% endif %}
+
+      <details class="demand-feed-actions">
+        <summary class="button button-ghost compact-pill">Ver y responder</summary>
+        <div class="inline-demand-detail">
+          <p class="muted">{{ demand.attributes.get("description", demand_text) }}</p>
+          {% if current_user %}
+            {% if demand.user_id == current_user.id %}
+              <div class="small-note">No puedes responder a una demanda publicada por ti mismo.</div>
+            {% elif demand.viewer_has_offer %}
+              <a href="/my-offers?selected_offer_id={{ demand.viewer_offer_id }}" class="button button-primary">Ir a la conversación</a>
+            {% else %}
+              <form action="/demands/{{ demand.id }}/offers" method="post" class="form-stack compact-offer-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="redirect_to" value="/#demand-{{ demand.id }}">
+                <textarea name="message" rows="3" placeholder="Escribe tu oferta..." required></textarea>
+                <button type="submit" class="button button-primary compact-send">Enviar oferta</button>
+              </form>
+            {% endif %}
+          {% else %}
+            <a href="/login" class="button button-primary">Accede para ofertar</a>
+          {% endif %}
+        </div>
+      </details>
+
+      {% if debug_normalization %}
+        <script type="application/json" id="normalized-demand-{{ demand.id }}">{{ demand.normalized_payload | tojson }}</script>
+      {% endif %}
+    </article>
+  {% else %}
+    <article class="card empty-state">
+      <h3>No hay demandas que encajen con ese filtro.</h3>
+    </article>
+  {% endfor %}
+</section>
+
+{% if pagination.total_pages > 1 %}
+  <nav class="pagination-bar" aria-label="Paginación de demandas">
+    {% if pagination.prev_url %}
+      <a href="{{ pagination.prev_url }}" class="button button-ghost">Anterior</a>
+    {% endif %}
+    <div class="pagination-pages">
+      {% for item in pagination.pages %}
+        <a href="{{ item.url }}" class="pagination-pill {{ 'is-current' if item.current else '' }}">{{ item.number }}</a>
+      {% endfor %}
+    </div>
+    {% if pagination.next_url %}
+      <a href="{{ pagination.next_url }}" class="button button-ghost">Siguiente</a>
+    {% endif %}
+  </nav>
+{% endif %}
+
+<script>
+  const keywordSuggestions = {{ keyword_suggestions | tojson }};
+  const updateRemainingTimes = () => {
+    document.querySelectorAll('.remaining-time').forEach((element) => {
+      const raw = element.dataset.expiresAt;
+      if (!raw) {
+        element.textContent = 'sin fecha';
+        return;
+      }
+      const expires = new Date(raw);
+      const diffMs = expires - new Date();
+      if (diffMs <= 0) {
+        element.textContent = 'caducada';
+        return;
+      }
+      const totalMinutes = Math.floor(diffMs / 60000);
+      const hours = Math.floor(totalMinutes / 60);
+      const minutes = totalMinutes % 60;
+      element.textContent = `faltan ${hours}h ${minutes}m`;
+    });
+  };
+  updateRemainingTimes();
+  window.setInterval(updateRemainingTimes, 60000);
+
+  (() => {
+    const compactZoneForQuery = (payload) => {
+      if (!payload || typeof payload !== 'object') return payload;
+      const clone = JSON.parse(JSON.stringify(payload));
+      if (clone.mode === 'area') {
+        const center = clone.center || {};
+        let lat = Number(center.lat);
+        let lon = Number(center.lon);
+        const bbox = Array.isArray(clone.bbox) && clone.bbox.length === 4 ? clone.bbox.map(Number) : null;
+        if ((!Number.isFinite(lat) || !Number.isFinite(lon)) && bbox) {
+          lon = (bbox[0] + bbox[2]) / 2;
+          lat = (bbox[1] + bbox[3]) / 2;
+        }
+        let radiusBucket = clone.radius_bucket || '10km';
+        let radiusKm = Number.isFinite(Number(clone.radius_km)) ? Number(clone.radius_km) : null;
+        if (bbox && Number.isFinite(lat) && Number.isFinite(lon)) {
+          const toRadians = (value) => (value * Math.PI) / 180;
+          const haversineKm = (lat1, lon1, lat2, lon2) => {
+            const earthRadiusKm = 6371;
+            const dLat = toRadians(lat2 - lat1);
+            const dLon = toRadians(lon2 - lon1);
+            const a =
+              Math.sin(dLat / 2) ** 2 +
+              Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(dLon / 2) ** 2;
+            return earthRadiusKm * 2 * Math.asin(Math.sqrt(a));
+          };
+          const corners = [
+            [bbox[1], bbox[0]],
+            [bbox[1], bbox[2]],
+            [bbox[3], bbox[0]],
+            [bbox[3], bbox[2]],
+          ];
+          const estimate = corners.reduce((maxDistance, [cornerLat, cornerLon]) => {
+            return Math.max(maxDistance, haversineKm(lat, lon, cornerLat, cornerLon));
+          }, 0);
+          const buckets = [
+            { radius_bucket: '1km', radius_km: 1, ref: 1 },
+            { radius_bucket: '2km', radius_km: 2, ref: 2 },
+            { radius_bucket: '5km', radius_km: 5, ref: 5 },
+            { radius_bucket: '10km', radius_km: 10, ref: 10 },
+            { radius_bucket: '30km', radius_km: 30, ref: 30 },
+            { radius_bucket: '50km', radius_km: 50, ref: 50 },
+            { radius_bucket: '100km', radius_km: 100, ref: 100 },
+            { radius_bucket: '200km', radius_km: 200, ref: 200 },
+            { radius_bucket: '200_plus', radius_km: null, ref: 220 },
+          ];
+          const best = buckets.reduce((winner, candidate) => {
+            return Math.abs(candidate.ref - estimate) < Math.abs(winner.ref - estimate) ? candidate : winner;
+          }, buckets[0]);
+          radiusBucket = best.radius_bucket;
+          radiusKm = best.radius_km;
+        }
+        return {
+          mode: 'area',
+          label: clone.label || '',
+          center: {
+            lat: Number.isFinite(lat) ? lat : null,
+            lon: Number.isFinite(lon) ? lon : null,
+          },
+          radius_km: radiusKm,
+          radius_bucket: radiusBucket,
+          source: clone.source || '',
+          raw_query: clone.raw_query || '',
+          admin_level: clone.admin_level || '',
+          bbox: null,
+          geojson: null,
+        };
+      }
+      clone.geojson = null;
+      return clone;
+    };
+
+    const filterModal = document.getElementById('filter-modal');
+    if (filterModal) {
+      const openFilterModal = () => {
+        filterModal.hidden = false;
+        document.body.classList.add('modal-open');
+        filterModal.querySelector('input[name="name"]')?.focus();
+      };
+      const closeFilterModal = () => {
+        filterModal.hidden = true;
+        document.body.classList.remove('modal-open');
+      };
+
+      document.querySelectorAll('[data-filter-modal-open="true"]').forEach((button) => {
+        button.addEventListener('click', openFilterModal);
+      });
+      filterModal.querySelectorAll('[data-filter-modal-close="true"]').forEach((button) => {
+        button.addEventListener('click', closeFilterModal);
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && !filterModal.hidden) {
+          closeFilterModal();
+        }
+      });
+    }
+
+    document.querySelectorAll('[data-saved-filter-select]').forEach((select) => {
+      select.addEventListener('change', () => {
+        const url = new URL(window.location.pathname, window.location.origin);
+        const value = select.value.trim();
+        if (!value) {
+          window.location.href = url.pathname;
+          return;
+        }
+        url.searchParams.set('saved_filter_id', value);
+        window.location.href = `${url.pathname}?${url.searchParams.toString()}`;
+      });
+    });
+
+    document.querySelectorAll('.search-grid-home').forEach((form) => {
+      form.addEventListener('submit', () => {
+        const input = form.querySelector('input[name="location_zone_json"]');
+        const labelInput = form.querySelector('input[name="location"]');
+        if (!input || !input.value) {
+          if (labelInput && !labelInput.value.trim()) {
+            labelInput.disabled = true;
+          }
+          return;
+        }
+        try {
+          const compact = compactZoneForQuery(JSON.parse(input.value));
+          const hasGeometry = compact && (
+            (compact.center && compact.center.lat != null && compact.center.lon != null)
+            || compact.geojson
+            || (Array.isArray(compact.bbox) && compact.bbox.length === 4)
+          );
+          if (!hasGeometry) {
+            input.disabled = true;
+            if (labelInput && !labelInput.value.trim()) {
+              labelInput.disabled = true;
+            }
+            return;
+          }
+          input.value = JSON.stringify(compact);
+        } catch (_) {
+        }
+      });
+    });
+
+    document.querySelectorAll('[data-keyword-search="true"]').forEach((root) => {
+      const input = root.querySelector('[data-keyword-input]');
+      const clear = root.querySelector('[data-keyword-clear]');
+      const results = root.querySelector('[data-keyword-results]');
+      if (!input || !results) return;
+
+      const hideResults = () => {
+        results.hidden = true;
+      };
+
+      const renderResults = (items) => {
+        results.innerHTML = '';
+        if (!items.length) {
+          hideResults();
+          return;
+        }
+        items.forEach((item) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'keyword-result-item';
+          button.textContent = item;
+          button.addEventListener('click', () => {
+            input.value = item;
+            if (clear) clear.hidden = false;
+            hideResults();
+          });
+          results.appendChild(button);
+        });
+        results.hidden = false;
+      };
+
+      const updateSuggestions = () => {
+        const raw = input.value.trim().toLowerCase();
+        if (clear) clear.hidden = !raw;
+        if (!raw) {
+          hideResults();
+          return;
+        }
+        const matches = keywordSuggestions
+          .filter((item) => item.toLowerCase().includes(raw))
+          .slice(0, 8);
+        renderResults(matches);
+      };
+
+      input.addEventListener('input', updateSuggestions);
+      input.addEventListener('focus', updateSuggestions);
+      clear?.addEventListener('click', (event) => {
+        event.preventDefault();
+        input.value = '';
+        clear.hidden = true;
+        hideResults();
+        input.focus();
+      });
+
+      document.addEventListener('click', (event) => {
+        if (!root.contains(event.target)) {
+          hideResults();
+        }
+      });
+    });
+
+    const ensureMap = (container) => {
+      if (!container || container.dataset.mapReady === 'true' || !window.L) return;
+      let zone = {};
+      try {
+        zone = JSON.parse(container.dataset.zone || '{}');
+      } catch (_) {
+        zone = {};
+      }
+      const defaultBounds = [
+        [36.0, -9.9],
+        [44.2, 4.2],
+      ];
+      const map = L.map(container, {
+        zoomControl: true,
+        dragging: true,
+        scrollWheelZoom: false,
+        doubleClickZoom: false,
+        boxZoom: false,
+        keyboard: false,
+        tap: true,
+        touchZoom: true,
+      });
+      let resetView = null;
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "&copy; OpenStreetMap contributors",
+        maxZoom: 19,
+      }).addTo(map);
+      const center = zone.center || {};
+      const hasCenter = Number.isFinite(Number(center.lat)) && Number.isFinite(Number(center.lon));
+      if (zone.mode === 'area' && (zone.geojson || (Array.isArray(zone.bbox) && zone.bbox.length === 4))) {
+        const layer = zone.geojson
+          ? L.geoJSON(zone.geojson, {
+              style: {
+                color: "#0f766e",
+                weight: 2,
+                fillColor: "rgba(15, 118, 110, 0.18)",
+                fillOpacity: 0.3,
+              },
+            }).addTo(map)
+          : L.rectangle(
+              [
+                [Number(zone.bbox[1]), Number(zone.bbox[0])],
+                [Number(zone.bbox[3]), Number(zone.bbox[2])],
+              ],
+              {
+                color: "#0f766e",
+                weight: 2,
+                fillColor: "rgba(15, 118, 110, 0.18)",
+                fillOpacity: 0.3,
+              }
+            ).addTo(map);
+        const bounds = layer.getBounds();
+        if (bounds.isValid()) {
+          map.fitBounds(bounds.pad(0.15));
+          resetView = { type: 'bounds', value: bounds.pad(0.15) };
+        } else if (hasCenter) {
+          map.setView([Number(center.lat), Number(center.lon)], 10);
+          resetView = { type: 'view', value: [[Number(center.lat), Number(center.lon)], 10] };
+        }
+      } else if (hasCenter) {
+        const radiusBucket = zone.radius_bucket || '10km';
+        const radiusKm = Number.isFinite(Number(zone.radius_km)) ? Number(zone.radius_km) : ({ "1km":1, "2km":2, "5km":5, "10km":10, "30km":30, "50km":50, "100km":100, "200km":200, "200_plus":220 }[radiusBucket] || 10);
+        const lat = Number(center.lat);
+        const lon = Number(center.lon);
+        map.setView([lat, lon], radiusKm <= 5 ? 12 : 10);
+        resetView = { type: 'view', value: [[lat, lon], radiusKm <= 5 ? 12 : 10] };
+        L.marker([lat, lon]).addTo(map);
+        L.circle([lat, lon], {
+          radius: radiusKm * 1000,
+          color: "#0f766e",
+          fillColor: "rgba(15, 118, 110, 0.18)",
+          fillOpacity: 0.35,
+          weight: 2,
+        }).addTo(map);
+      } else {
+        map.fitBounds(defaultBounds, { padding: [18, 18] });
+        resetView = { type: 'bounds', value: L.latLngBounds(defaultBounds).pad(0.0) };
+      }
+      container.dataset.mapReady = 'true';
+      container.__resetMapView = () => {
+        if (!resetView) return;
+        if (resetView.type === 'bounds') {
+          map.fitBounds(resetView.value);
+        } else if (resetView.type === 'view') {
+          map.setView(resetView.value[0], resetView.value[1]);
+        }
+        window.setTimeout(() => map.invalidateSize(), 40);
+      };
+      window.setTimeout(() => {
+        map.invalidateSize();
+        if (zone.mode === 'area' && (zone.geojson || (Array.isArray(zone.bbox) && zone.bbox.length === 4))) {
+          const bounds = map.getBounds();
+          if (!bounds.isValid()) {
+            map.fitBounds(defaultBounds, { padding: [18, 18] });
+          }
+        }
+      }, 80);
+    };
+
+    document.querySelectorAll('[data-demand-map-toggle]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const target = document.getElementById(button.dataset.demandMapToggle);
+        if (!target) return;
+        const willOpen = target.hidden;
+        target.hidden = !target.hidden;
+        button.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+        if (willOpen) {
+          const container = target.querySelector('[data-readonly-map="true"]');
+          ensureMap(container);
+          if (container?.__resetMapView) {
+            window.setTimeout(() => container.__resetMapView(), 50);
+          }
+        }
+      });
+    });
+  })();
+</script>
+{% endblock %}

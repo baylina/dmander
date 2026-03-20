@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="detail-layout">
+  <article class="card detail-card">
+    <div class="card-topline">
+      <span class="pill">{{ demand.intent_type }}</span>
+      <span class="pill soft">{{ demand.offer_count }} o</span>
+    </div>
+    <h1>{{ demand.summary }}</h1>
+    <p class="lead">{{ demand.attributes.get("description", "") }}</p>
+
+    <div class="detail-grid">
+      <div>
+        <span class="detail-label">Ubicación</span>
+        <strong>{{ demand.location or "Por concretar" }}</strong>
+      </div>
+      <div>
+        <span class="detail-label">Caducidad</span>
+        <strong>{{ demand.expires_at.strftime("%d/%m/%Y %H:%M") if demand.expires_at else "Sin especificar" }}</strong>
+      </div>
+      <div>
+        <span class="detail-label">Presupuesto</span>
+        <strong>
+          {% if demand.budget_min or demand.budget_max %}
+            {{ demand.budget_min or "?" }} - {{ demand.budget_max or "?" }} €
+          {% else %}
+            Sin indicar
+          {% endif %}
+        </strong>
+      </div>
+      <div>
+        <span class="detail-label">Publicado por</span>
+        <strong>{{ demand.owner_name }}</strong>
+      </div>
+    </div>
+  </article>
+
+  {% if current_user and demand.is_owner %}
+    <article class="card">
+      <p class="eyebrow">Ofertas recibidas</p>
+      <h2>Respuestas a esta d</h2>
+      <div class="list-stack">
+        {% for offer in offers %}
+          <div class="offer-card">
+            <div class="offer-header">
+              <strong>{{ offer.supplier_name }}</strong>
+              <span>{{ offer.created_at.strftime("%d/%m/%Y %H:%M") if offer.created_at else "" }}</span>
+            </div>
+            <p>{{ offer.message }}</p>
+            <p class="small-note">{{ offer.supplier_email }}</p>
+            <a href="/offers/{{ offer.id }}" class="button button-ghost">Abrir conversación</a>
+          </div>
+        {% else %}
+          <div class="empty-inline">Todavía no has recibido ofertas para esta demanda.</div>
+        {% endfor %}
+      </div>
+    </article>
+  {% elif current_user %}
+    <article class="card">
+      <p class="eyebrow">Responder demanda</p>
+      <h2>Enviar una o</h2>
+      <form action="/demands/{{ demand.id }}/offers" method="post" class="form-stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>
+          <span>Tu propuesta</span>
+          <textarea name="message" rows="6" placeholder="Explica qué ofreces, condiciones, precio orientativo o cómo resolverías la necesidad." required></textarea>
+        </label>
+        <button type="submit" class="button button-primary">
+          {% if demand.viewer_has_offer %}Actualizar oferta{% else %}Enviar oferta{% endif %}
+        </button>
+      </form>
+      {% if demand.viewer_offer_id %}
+        <a href="/offers/{{ demand.viewer_offer_id }}" class="button button-ghost">Abrir conversación</a>
+      {% endif %}
+    </article>
+  {% else %}
+    <article class="card login-cta">
+      <p class="eyebrow">Acceso requerido</p>
+      <h2>Inicia sesión para responder</h2>
+      <p class="muted">Puedes entrar con email y contraseña o con una cuenta social configurada.</p>
+      <div class="hero-actions">
+        <a href="/login" class="button button-primary">Acceder</a>
+        <a href="/signup" class="button button-ghost">Crear cuenta</a>
+      </div>
+    </article>
+  {% endif %}
+</section>
+{% endblock %}

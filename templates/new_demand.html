@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+
+{% block content %}
+{% set wizard_step = active_wizard.step if active_wizard else "text" %}
+{% set is_published_step = wizard_step == "review" %}
+<section class="form-layout">
+  <article class="card form-card">
+    <h1>
+      {% if is_published_step %}
+        Enhorabuena! Demanda Publicada
+      {% elif wizard_step == "questions" %}
+        Detalles adicionales
+      {% else %}
+        {{ page_title or "Publica una d" }}
+      {% endif %}
+    </h1>
+    {% if is_published_step %}
+      <p class="muted">{{ active_wizard.published_message or "Prepárate para recibir propuestas de personas y empresas interesadas." }}</p>
+    {% endif %}
+
+    {% if edit_demand %}
+      <div class="wizard-panel">
+        <div class="wizard-block">
+          <span class="detail-label">Demanda actual</span>
+          <p class="lead compact">{{ edit_demand.summary }}</p>
+        </div>
+        {% if debug_normalization %}
+          <div class="wizard-block">
+            <button type="button" class="debug-json-trigger inline-debug-trigger" data-json-target="edit-demand-normalized" data-json-title="Normalized demand JSON · {{ edit_demand.summary }}">json</button>
+            <script type="application/json" id="edit-demand-normalized">{{ edit_demand.normalized_payload | tojson }}</script>
+          </div>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    {% if not active_wizard or wizard_step == "text" %}
+      <form action="{{ submit_action or '/demands' }}" method="post" class="form-stack js-busy-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <textarea name="demand_text" rows="7" placeholder="Escribe aqui cualquier producto o servicio que necesites en este momento" required>{{ initial_text or '' }}</textarea>
+        <button type="submit" class="button button-primary" data-busy-text="Analizando...">
+          <span class="button-label">{{ submit_label or 'Analizar y continuar' }}</span>
+          <span class="button-spinner" aria-hidden="true"></span>
+        </button>
+      </form>
+
+    {% elif wizard_step == "questions" %}
+      <div class="wizard-panel">
+        <div class="wizard-block">
+          <span class="detail-label">Texto inicial de la demanda</span>
+          <p class="lead compact">{{ active_wizard.state.original_text }}</p>
+        </div>
+        {% if debug_normalization and active_wizard.intent_domain and active_wizard.intent_type %}
+          <div class="wizard-block">
+            <span class="detail-label">Depuración de normalización</span>
+            <div class="chip-wrap">
+              <span class="pill">intent_domain: {{ active_wizard.intent_domain }}</span>
+              <span class="pill">intent_type: {{ active_wizard.intent_type }}</span>
+              <span class="pill">display_name: {{ active_wizard.schema_display_name }}</span>
+            </div>
+            <div class="chip-wrap">
+              {% for field in active_wizard.schema_required_fields %}
+                <span class="pill soft">required_field: {{ field }}</span>
+              {% endfor %}
+            </div>
+          </div>
+        {% endif %}
+      </div>
+
+      <form action="/demands/review" method="post" class="form-stack js-busy-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+        {% set required_fields = active_wizard.field_entries | selectattr("category", "equalto", "required") | list %}
+
+        {% if required_fields %}
+          <section class="questionnaire-group">
+            {% set blocking_entries = required_fields | selectattr("issue_message") | list %}
+            {% if blocking_entries %}
+              <div class="validation-summary">
+                <strong>Necesitas corregir esto antes de publicar:</strong>
+                <ul>
+                  {% for entry in blocking_entries %}
+                    <li><strong>{{ entry.field_label }}:</strong> {{ entry.issue_message }}{% if entry.current_value %} Valor actual: “{{ entry.current_value }}”.{% endif %}</li>
+                  {% endfor %}
+                </ul>
+              </div>
+            {% endif %}
+            <div class="questionnaire-grid">
+              {% for entry in required_fields %}
+                <label class="question-card {{ 'question-card-error' if entry.issue_message else '' }}">
+                  <span class="question-card-head">
+                    <strong>{{ entry.question }}<span class="required-mark">*</span></strong>
+                  </span>
+                  {% if entry.issue_message %}
+                    <span class="question-error-banner">{{ entry.issue_message }}</span>
+                  {% endif %}
+                  {% if entry.control.kind == "select" %}
+                    <select name="field__{{ entry.field_name }}" required aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
+                      <option value="">Selecciona una opción</option>
+                      {% for option in entry.control.options %}
+                        <option value="{{ option.value }}" {{ 'selected' if entry.control.value == option.value else '' }}>{{ option.label }}</option>
+                      {% endfor %}
+                    </select>
+                  {% elif entry.control.kind == "date" %}
+                    <input type="date" name="field__{{ entry.field_name }}" value="{{ entry.control.value }}" min="{{ entry.control.min }}" required aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
+                  {% elif entry.control.kind == "date_range" %}
+                    <div class="date-range-grid">
+                      <div class="date-range-field">
+                        <span class="mini-label">Desde</span>
+                        <input type="date" name="field__{{ entry.field_name }}__start" value="{{ entry.control.start_value }}" min="{{ entry.control.min }}" required aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
+                      </div>
+                      <div class="date-range-field">
+                        <span class="mini-label">Hasta</span>
+                        <input type="date" name="field__{{ entry.field_name }}__end" value="{{ entry.control.end_value }}" min="{{ entry.control.min }}" required aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
+                      </div>
+                    </div>
+                  {% elif entry.control.kind == "zone_selector" %}
+                    {% set input_name = "field__" ~ entry.field_name %}
+                    {% set hidden_json_name = input_name ~ "__zone_json" %}
+                    {% set hidden_label_name = input_name %}
+                    {% set zone_value = entry.control.value %}
+                    {% set map_id = "zone-map-" ~ loop.index ~ "-" ~ entry.field_name %}
+                    {% set zone_placeholder = entry.placeholder %}
+                    {% set zone_country_bias = "es" %}
+                    {% set radius_options = entry.control.radius_options %}
+                    {% include "_zone_selector.html" %}
+                  {% else %}
+                    <textarea name="field__{{ entry.field_name }}" rows="3" placeholder="{{ entry.placeholder }}" required aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">{{ entry.current_value }}</textarea>
+                  {% endif %}
+                  {% if entry.issue_message %}
+                    <span class="small-note">Corrige este valor y vuelve a continuar.</span>
+                  {% endif %}
+                </label>
+              {% endfor %}
+            </div>
+          </section>
+        {% else %}
+          <section class="questionnaire-group"></section>
+        {% endif %}
+
+        <div class="wizard-actions">
+          <button type="submit" class="button button-secondary" formaction="/demands/wizard/edit-text" formnovalidate>
+            Volver atrás
+          </button>
+          <button type="submit" class="button button-primary" data-busy-text="Publicando...">
+            <span class="button-label">{{ "Guardar cambios" if wizard_mode == "edit" else "Publicar demanda" }}</span>
+            <span class="button-spinner" aria-hidden="true"></span>
+          </button>
+        </div>
+      </form>
+
+    {% elif wizard_step == "review" %}
+      <div class="wizard-panel">
+        <div class="wizard-block">
+          <p class="lead compact">{{ active_wizard.state.original_text }}</p>
+          {% if active_wizard.answered_fields %}
+            <div class="published-demand-details">
+              {% for item in active_wizard.answered_fields %}
+                <div class="published-demand-line">
+                  <strong>{{ item.question }}</strong>
+                  <span>{{ item.answer }}</span>
+                </div>
+              {% endfor %}
+            </div>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="wizard-actions">
+        <a href="/my-demands" class="button button-secondary">Ir a Mis Demandas</a>
+        <a href="/" class="button button-primary">Ver todas</a>
+      </div>
+    {% endif %}
+  </article>
+</section>
+
+<script>
+  document.querySelectorAll('.js-busy-form').forEach((form) => {
+    form.addEventListener('submit', (event) => {
+      const button = event.submitter || form.querySelector('button[type="submit"]');
+      if (!button) return;
+      form.classList.add('is-submitting');
+      button.disabled = true;
+      button.classList.add('is-busy');
+      const label = button.querySelector('.button-label');
+      if (label && button.dataset.busyText) {
+        label.textContent = button.dataset.busyText;
+      }
+    });
+  });
+</script>
+{% endblock %}

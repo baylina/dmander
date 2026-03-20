@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="auth-layout">
+  <article class="card auth-card">
+    <p class="eyebrow">Acceso seguro</p>
+    <h1>Inicia sesión</h1>
+    <p class="muted">Accede con email y contraseña o usa una cuenta social configurada.</p>
+
+    <form action="/login" method="post" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>
+        <span>Email</span>
+        <input type="email" name="email" placeholder="tu@email.com" required>
+      </label>
+      <label>
+        <span>Contraseña</span>
+        <input type="password" name="password" placeholder="Mínimo 8 caracteres" required>
+      </label>
+      <button type="submit" class="button button-primary full-width">Entrar</button>
+    </form>
+
+    {% if oauth_providers %}
+      <div class="divider"><span>o continúa con</span></div>
+      <div class="social-grid">
+        {% for provider in oauth_providers %}
+          <a href="/auth/{{ provider.key }}" class="social-button">
+            <span>{{ provider.icon }}</span> {{ provider.label }}
+          </a>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <p class="small-note">¿No tienes cuenta? <a href="/signup">Crear cuenta</a></p>
+  </article>
+</section>
+{% endblock %}

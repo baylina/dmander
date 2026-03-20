@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ title }} · dmander</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+  <link rel="stylesheet" href="{{ request.url_for('static', path='css/app.css') }}">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="topbar">
+      <a href="/" class="brand">
+        <img src="{{ request.url_for('static', path='img/logo.svg') }}" alt="dmander">
+        <span>dmander</span>
+      </a>
+
+      <nav class="topnav">
+        <a href="/">Ver todas</a>
+        {% if current_user %}
+          <a href="/my-demands" class="nav-with-badge">
+            <span>Mis Demandas</span>
+            <span class="badge nav-badge" id="nav-badge-demands" {% if not notification_summary.my_demands_unread %}hidden{% endif %}>{{ notification_summary.my_demands_unread }}</span>
+          </a>
+          <a href="/my-offers" class="nav-with-badge">
+            <span>Mis Ofertas</span>
+            <span class="badge nav-badge" id="nav-badge-offers" {% if not notification_summary.my_offers_unread %}hidden{% endif %}>{{ notification_summary.my_offers_unread }}</span>
+          </a>
+          {% if debug_normalization %}
+            <a href="/admin/demands">Admin JSON</a>
+          {% endif %}
+          <a href="/demands/new?fresh=1" class="button button-cta">+ Publica</a>
+          <details class="user-menu">
+            <summary>{{ current_user.full_name }}</summary>
+            <form action="/logout" method="post" class="user-menu-panel">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button class="menu-action" type="submit">Cerrar sesión</button>
+            </form>
+          </details>
+        {% else %}
+          <a href="/login">Acceder</a>
+          <a href="/signup" class="button button-primary">Crear cuenta</a>
+        {% endif %}
+      </nav>
+    </header>
+
+    {% if flash_messages %}
+      <section class="flash-stack">
+        {% for flash in flash_messages %}
+          <div class="flash flash-{{ flash.category }}">{{ flash.message }}</div>
+        {% endfor %}
+      </section>
+    {% endif %}
+
+    <main>
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  {% if debug_normalization %}
+    <div class="debug-json-modal" id="debug-json-modal" hidden>
+      <div class="debug-json-backdrop" data-debug-close="true"></div>
+      <div class="debug-json-panel">
+        <div class="debug-json-head">
+          <strong id="debug-json-title">Normalized demand JSON</strong>
+          <div class="debug-json-actions">
+            <button type="button" class="debug-json-copy" id="debug-json-copy">Copiar</button>
+            <button type="button" class="debug-json-close" id="debug-json-close">Cerrar</button>
+          </div>
+        </div>
+        <pre id="debug-json-content"></pre>
+      </div>
+    </div>
+  {% endif %}
+
+  {% if current_user %}
+    <div class="live-toast" id="live-toast" hidden>
+      <strong>Nueva respuesta</strong>
+      <span id="live-toast-text"></span>
+      <a id="live-toast-link" href="/">Abrir</a>
+    </div>
+    <script>
+      (() => {
+        const scrollKey = `dmander:scroll:${window.location.pathname}`;
+        const restoreScroll = () => {
+          const saved = window.sessionStorage.getItem(scrollKey);
+          if (!saved) return;
+          const value = Number(saved);
+          if (Number.isFinite(value)) {
+            window.scrollTo({ top: value, behavior: 'auto' });
+          }
+          window.sessionStorage.removeItem(scrollKey);
+        };
+
+        document.querySelectorAll('[data-preserve-scroll="true"]').forEach((element) => {
+          const saveScroll = () => {
+            window.sessionStorage.setItem(scrollKey, String(window.scrollY));
+          };
+          element.addEventListener('click', saveScroll);
+          element.addEventListener('submit', saveScroll);
+        });
+
+        window.addEventListener('load', restoreScroll);
+
+        const badgeDemands = document.getElementById('nav-badge-demands');
+        const badgeOffers = document.getElementById('nav-badge-offers');
+        const toast = document.getElementById('live-toast');
+        const toastText = document.getElementById('live-toast-text');
+        const toastLink = document.getElementById('live-toast-link');
+        let knownSignatures = new Set();
+        let firstRun = true;
+
+        const applyBadge = (element, value) => {
+          if (!element) return;
+          if (value > 0) {
+            element.hidden = false;
+            element.textContent = String(value);
+          } else {
+            element.hidden = true;
+          }
+        };
+
+        const showToast = (item) => {
+          if (!toast || !toastText || !toastLink) return;
+          toastText.textContent = `${item.sender_name} ha respondido en "${item.demand_summary}"`;
+          toastLink.href = item.target;
+          toast.hidden = false;
+          clearTimeout(window.__dmanderToastTimer);
+          window.__dmanderToastTimer = setTimeout(() => {
+            toast.hidden = true;
+          }, 5500);
+        };
+
+        const poll = async () => {
+          try {
+            const response = await fetch('/api/notifications', { headers: { 'Accept': 'application/json' }});
+            if (!response.ok) return;
+            const data = await response.json();
+            applyBadge(badgeDemands, data.my_demands_unread || 0);
+            applyBadge(badgeOffers, data.my_offers_unread || 0);
+
+            if (toast && firstRun) {
+              toast.hidden = true;
+            }
+
+            const currentSignatures = new Set((data.items || []).map((item) => item.signature));
+            if (!firstRun) {
+              const newest = (data.items || []).find((item) => !knownSignatures.has(item.signature));
+              if (newest) showToast(newest);
+            }
+            knownSignatures = currentSignatures;
+            firstRun = false;
+          } catch (_) {
+          }
+        };
+
+        poll();
+        window.setInterval(poll, 8000);
+      })();
+    </script>
+  {% endif %}
+
+  {% if debug_normalization %}
+    <script>
+      (() => {
+        const modal = document.getElementById('debug-json-modal');
+        const titleEl = document.getElementById('debug-json-title');
+        const contentEl = document.getElementById('debug-json-content');
+        const closeEl = document.getElementById('debug-json-close');
+        const copyEl = document.getElementById('debug-json-copy');
+        if (!modal || !titleEl || !contentEl) return;
+
+        const close = () => {
+          modal.hidden = true;
+          document.body.classList.remove('modal-open');
+        };
+
+        const open = (payload, title = 'Normalized demand JSON') => {
+          titleEl.textContent = title;
+          contentEl.textContent = JSON.stringify(payload || {}, null, 2);
+          modal.hidden = false;
+          document.body.classList.add('modal-open');
+        };
+
+        window.dmanderDebugJson = { open, close };
+
+        document.addEventListener('click', (event) => {
+          const trigger = event.target.closest('[data-json-target]');
+          if (trigger) {
+            event.preventDefault();
+            event.stopPropagation();
+            const targetId = trigger.getAttribute('data-json-target');
+            const title = trigger.getAttribute('data-json-title') || 'Normalized demand JSON';
+            const source = targetId ? document.getElementById(targetId) : null;
+            if (source) {
+              try {
+                open(JSON.parse(source.textContent || '{}'), title);
+              } catch (_) {
+              }
+            }
+            return;
+          }
+
+          if (event.target.closest('[data-debug-close="true"]')) {
+            close();
+          }
+        });
+
+        closeEl?.addEventListener('click', close);
+        copyEl?.addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(contentEl.textContent || '');
+            copyEl.textContent = 'Copiado';
+            window.setTimeout(() => { copyEl.textContent = 'Copiar'; }, 1400);
+          } catch (_) {
+          }
+        });
+
+        document.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape' && !modal.hidden) close();
+        });
+      })();
+    </script>
+  {% endif %}
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="{{ request.url_for('static', path='js/zone-selector.js') }}"></script>
+</body>
+</html>

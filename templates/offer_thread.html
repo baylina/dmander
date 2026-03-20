@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="thread-layout">
+  <article class="card">
+    <p class="eyebrow">Conversación</p>
+    <div class="title-inline">
+      <h1>{{ thread.demand_summary }}</h1>
+      {% if debug_normalization %}
+        <button type="button" class="debug-json-trigger" data-json-target="normalized-demand-thread" data-json-title="Normalized demand JSON · {{ thread.demand_summary }}">json</button>
+      {% endif %}
+    </div>
+    <p class="small-note">Demanda abierta hasta {{ thread.demand_expires_at.strftime("%d/%m/%Y %H:%M") if thread.demand_expires_at else "sin fecha" }}</p>
+
+    <div class="thread-messages">
+      {% for message in thread.messages %}
+        <div class="thread-message {% if current_user and message.sender_user_id == current_user.id %}mine{% endif %}">
+          <div class="thread-meta">
+            <strong>{{ message.sender_name }}</strong>
+            <span>{{ message.created_at.strftime("%d/%m/%Y %H:%M") if message.created_at else "" }}</span>
+          </div>
+          <p>{{ message.body }}</p>
+        </div>
+      {% else %}
+        <div class="empty-inline">Todavía no hay mensajes en esta conversación.</div>
+      {% endfor %}
+    </div>
+
+    <form action="/offers/{{ thread.id }}/messages" method="post" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <textarea name="body" rows="4" placeholder="Escribe tu mensaje..." required></textarea>
+      <button type="submit" class="button button-primary">Enviar mensaje</button>
+    </form>
+  </article>
+</section>
+{% if debug_normalization %}
+  <script type="application/json" id="normalized-demand-thread">{{ thread.normalized_payload | tojson }}</script>
+{% endif %}
+{% endblock %}

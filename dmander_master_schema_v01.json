@@ -1,0 +1,2935 @@
+{
+  "version": "dmander_master_schema_v0_1",
+  "description": "Tabla maestra operativa para normalizar d y filtros de O.",
+  "common_core": {
+    "fields": [
+      "intent_domain",
+      "intent_type",
+      "summary",
+      "description",
+      "location_mode",
+      "location_value",
+      "budget_mode",
+      "budget_min",
+      "budget_max",
+      "urgency",
+      "dates",
+      "attributes"
+    ],
+    "location_modes": [
+      "none",
+      "city",
+      "area",
+      "exact_address",
+      "radius_from_point",
+      "travel_time_from_origin",
+      "destination",
+      "online",
+      "hybrid",
+      "multi_location",
+      "unspecified"
+    ],
+    "budget_modes": [
+      "required_fixed",
+      "required_range",
+      "optional_fixed",
+      "optional_range",
+      "market_quote",
+      "per_hour",
+      "per_day",
+      "per_night",
+      "per_unit",
+      "monthly",
+      "annual",
+      "not_applicable"
+    ]
+  },
+  "domains": [
+    {
+      "code": "education",
+      "name": "Educación y formación"
+    },
+    {
+      "code": "travel",
+      "name": "Alojamiento y viajes"
+    },
+    {
+      "code": "food_experiences",
+      "name": "Restauración y experiencias"
+    },
+    {
+      "code": "health_wellbeing",
+      "name": "Salud y bienestar"
+    },
+    {
+      "code": "home_services",
+      "name": "Servicios del hogar"
+    },
+    {
+      "code": "construction",
+      "name": "Reformas y construcción"
+    },
+    {
+      "code": "technical_repairs",
+      "name": "Reparación y mantenimiento técnico"
+    },
+    {
+      "code": "automotive",
+      "name": "Automoción y movilidad"
+    },
+    {
+      "code": "new_products",
+      "name": "Compra de productos nuevos"
+    },
+    {
+      "code": "used_products",
+      "name": "Compra de productos de segunda mano"
+    },
+    {
+      "code": "selling",
+      "name": "Venta de productos"
+    },
+    {
+      "code": "rentals",
+      "name": "Alquiler de bienes"
+    },
+    {
+      "code": "residential_real_estate",
+      "name": "Inmobiliario residencial"
+    },
+    {
+      "code": "vacation_real_estate",
+      "name": "Inmobiliario vacacional"
+    },
+    {
+      "code": "events",
+      "name": "Eventos y celebraciones"
+    },
+    {
+      "code": "personal_services",
+      "name": "Servicios personales"
+    },
+    {
+      "code": "beauty",
+      "name": "Belleza y estética"
+    },
+    {
+      "code": "pets",
+      "name": "Mascotas"
+    },
+    {
+      "code": "professional_services",
+      "name": "Servicios profesionales"
+    },
+    {
+      "code": "b2b_services",
+      "name": "Servicios empresariales B2B"
+    },
+    {
+      "code": "jobs_talent",
+      "name": "Empleo y talento"
+    },
+    {
+      "code": "tech_digital",
+      "name": "Tecnología y digital"
+    },
+    {
+      "code": "finance_investment",
+      "name": "Finanzas, seguros e inversión"
+    },
+    {
+      "code": "special_opportunities",
+      "name": "Oportunidades especiales / miscelánea"
+    }
+  ],
+  "intent_types": [
+    {
+      "intent_domain": "education",
+      "intent_type": "math_tutoring",
+      "display_name": "Clases particulares de matemáticas",
+      "required_fields": [
+        "subject",
+        "level",
+        "modality"
+      ],
+      "optional_fields": [
+        "location",
+        "frequency",
+        "budget_per_hour",
+        "student_age"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "online",
+          "hybrid"
+        ],
+        "required": false
+      },
+      "budget_policy": "per_hour",
+      "examples": [
+        "Busco profesor de matemáticas para 2º ESO en Sant Cugat",
+        "Necesito clases online de álgebra universitaria"
+      ]
+    },
+    {
+      "intent_domain": "education",
+      "intent_type": "language_tutoring",
+      "display_name": "Clases particulares de idiomas",
+      "required_fields": [
+        "language",
+        "current_level",
+        "modality"
+      ],
+      "optional_fields": [
+        "goal",
+        "frequency",
+        "budget_per_hour",
+        "location"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "online",
+          "hybrid"
+        ],
+        "required": false
+      },
+      "budget_policy": "per_hour",
+      "examples": [
+        "Busco profesora de inglés para conversación",
+        "Necesito clases online de francés B1"
+      ]
+    },
+    {
+      "intent_domain": "education",
+      "intent_type": "school_support",
+      "display_name": "Refuerzo escolar general",
+      "required_fields": [
+        "education_stage",
+        "modality"
+      ],
+      "optional_fields": [
+        "subjects",
+        "frequency",
+        "location",
+        "budget_per_hour"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "online",
+          "hybrid"
+        ],
+        "required": false
+      },
+      "budget_policy": "per_hour",
+      "examples": [
+        "Busco refuerzo escolar para primaria",
+        "Necesito apoyo para varias asignaturas en bachillerato"
+      ]
+    },
+    {
+      "intent_domain": "education",
+      "intent_type": "exam_prep",
+      "display_name": "Preparación de exámenes oficiales",
+      "required_fields": [
+        "exam_target",
+        "modality"
+      ],
+      "optional_fields": [
+        "exam_date",
+        "current_level",
+        "frequency",
+        "budget_per_hour"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "online",
+          "hybrid"
+        ],
+        "required": false
+      },
+      "budget_policy": "per_hour",
+      "examples": [
+        "Busco preparación para B2 First",
+        "Necesito profesor para selectividad de matemáticas"
+      ]
+    },
+    {
+      "intent_domain": "education",
+      "intent_type": "music_training",
+      "display_name": "Formación musical",
+      "required_fields": [
+        "discipline",
+        "level",
+        "modality"
+      ],
+      "optional_fields": [
+        "frequency",
+        "budget_per_hour",
+        "location"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "online",
+          "hybrid"
+        ],
+        "required": false
+      },
+      "budget_policy": "per_hour",
+      "examples": [
+        "Busco profesor de piano para principiante",
+        "Clases de canto online"
+      ]
+    },
+    {
+      "intent_domain": "travel",
+      "intent_type": "hotel_booking",
+      "display_name": "Reserva de hotel",
+      "required_fields": [
+        "destination",
+        "checkin",
+        "checkout",
+        "people"
+      ],
+      "optional_fields": [
+        "rooms",
+        "budget_total",
+        "budget_per_night",
+        "stars",
+        "board_type",
+        "style"
+      ],
+      "location_policy": {
+        "allowed": [
+          "destination",
+          "area",
+          "travel_time_from_origin"
+        ],
+        "required": true
+      },
+      "budget_policy": "per_night",
+      "examples": [
+        "Quiero hotel en Menorca del 12 al 18 de agosto para 4 personas",
+        "Busco hotel romántico a una hora de Barcelona"
+      ]
+    },
+    {
+      "intent_domain": "travel",
+      "intent_type": "tourist_apartment",
+      "display_name": "Apartamento turístico",
+      "required_fields": [
+        "destination",
+        "dates",
+        "people"
+      ],
+      "optional_fields": [
+        "rooms",
+        "budget_total",
+        "pool",
+        "pets_allowed"
+      ],
+      "location_policy": {
+        "allowed": [
+          "destination",
+          "area"
+        ],
+        "required": true
+      },
+      "budget_policy": "per_night",
+      "examples": [
+        "Busco apartamento en la Costa Brava para 6 personas",
+        "Necesito piso vacacional con piscina"
+      ]
+    },
+    {
+      "intent_domain": "travel",
+      "intent_type": "rural_house",
+      "display_name": "Casa rural",
+      "required_fields": [
+        "destination_area",
+        "dates",
+        "people"
+      ],
+      "optional_fields": [
+        "rooms",
+        "budget_total",
+        "barbecue",
+        "pets_allowed"
+      ],
+      "location_policy": {
+        "allowed": [
+          "destination",
+          "area"
+        ],
+        "required": true
+      },
+      "budget_policy": "optional_fixed",
+      "examples": [
+        "Casa rural cerca de Girona para fin de semana",
+        "Busco masía para grupo de amigos"
+      ]
+    },
+    {
+      "intent_domain": "travel",
+      "intent_type": "holiday_package",
+      "display_name": "Paquete vacacional",
+      "required_fields": [
+        "destination",
+        "dates",
+        "people"
+      ],
+      "optional_fields": [
+        "flight_included",
+        "hotel_category",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "destination"
+        ],
+        "required": true
+      },
+      "budget_policy": "optional_fixed",
+      "examples": [
+        "Viaje a Roma con vuelo y hotel",
+        "Escapada a Canarias con todo incluido"
+      ]
+    },
+    {
+      "intent_domain": "travel",
+      "intent_type": "travel_transport",
+      "display_name": "Transporte para viaje",
+      "required_fields": [
+        "origin",
+        "destination",
+        "date"
+      ],
+      "optional_fields": [
+        "people",
+        "luggage",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "multi_location"
+        ],
+        "required": true
+      },
+      "budget_policy": "optional_fixed",
+      "examples": [
+        "Necesito transfer aeropuerto a hotel",
+        "Busco taxi para ir a Andorra"
+      ]
+    },
+    {
+      "intent_domain": "food_experiences",
+      "intent_type": "restaurant_booking",
+      "display_name": "Reserva de restaurante",
+      "required_fields": [
+        "city_or_area",
+        "date",
+        "people"
+      ],
+      "optional_fields": [
+        "budget_per_person",
+        "style",
+        "terrace",
+        "romantic"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "area"
+        ],
+        "required": true
+      },
+      "budget_policy": "per_unit",
+      "examples": [
+        "Busco restaurante romántico en Barcelona",
+        "Mesa para 8 en Sant Cugat"
+      ]
+    },
+    {
+      "intent_domain": "food_experiences",
+      "intent_type": "catering",
+      "display_name": "Catering",
+      "required_fields": [
+        "event_type",
+        "date",
+        "people"
+      ],
+      "optional_fields": [
+        "location",
+        "budget_total",
+        "cuisine_type"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address",
+          "city"
+        ],
+        "required": false
+      },
+      "budget_policy": "optional_fixed",
+      "examples": [
+        "Necesito catering para cumpleaños",
+        "Busco catering corporativo para 50 personas"
+      ]
+    },
+    {
+      "intent_domain": "food_experiences",
+      "intent_type": "private_chef",
+      "display_name": "Chef privado",
+      "required_fields": [
+        "date",
+        "people",
+        "location"
+      ],
+      "optional_fields": [
+        "cuisine_style",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address",
+          "city"
+        ],
+        "required": true
+      },
+      "budget_policy": "optional_fixed",
+      "examples": [
+        "Chef privado para cena romántica",
+        "Cena en casa para 10 personas"
+      ]
+    },
+    {
+      "intent_domain": "food_experiences",
+      "intent_type": "food_experience",
+      "display_name": "Experiencia gastronómica",
+      "required_fields": [
+        "city_or_area",
+        "date_or_period"
+      ],
+      "optional_fields": [
+        "people",
+        "budget_total",
+        "experience_type"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "area"
+        ],
+        "required": true
+      },
+      "budget_policy": "optional_fixed",
+      "examples": [
+        "Cata de vinos cerca de Barcelona",
+        "Experiencia gourmet en pareja"
+      ]
+    },
+    {
+      "intent_domain": "health_wellbeing",
+      "intent_type": "physiotherapy",
+      "display_name": "Fisioterapeuta",
+      "required_fields": [
+        "modality",
+        "reason"
+      ],
+      "optional_fields": [
+        "location",
+        "budget_total",
+        "urgency"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "exact_address",
+          "hybrid",
+          "online"
+        ],
+        "required": false
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Busco fisioterapeuta a domicilio postoperatorio",
+        "Necesito fisio deportivo en Sant Cugat"
+      ]
+    },
+    {
+      "intent_domain": "health_wellbeing",
+      "intent_type": "psychology",
+      "display_name": "Psicólogo / terapeuta",
+      "required_fields": [
+        "modality",
+        "specialty"
+      ],
+      "optional_fields": [
+        "location",
+        "budget_per_session",
+        "frequency"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "online",
+          "hybrid"
+        ],
+        "required": false
+      },
+      "budget_policy": "optional_fixed",
+      "examples": [
+        "Busco psicólogo para ansiedad",
+        "Terapia de pareja online"
+      ]
+    },
+    {
+      "intent_domain": "health_wellbeing",
+      "intent_type": "nutrition",
+      "display_name": "Nutricionista",
+      "required_fields": [
+        "goal",
+        "modality"
+      ],
+      "optional_fields": [
+        "location",
+        "budget_per_session",
+        "frequency"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "online",
+          "hybrid"
+        ],
+        "required": false
+      },
+      "budget_policy": "optional_fixed",
+      "examples": [
+        "Nutricionista para pérdida de peso",
+        "Plan nutricional para deporte"
+      ]
+    },
+    {
+      "intent_domain": "health_wellbeing",
+      "intent_type": "personal_training",
+      "display_name": "Entrenador personal",
+      "required_fields": [
+        "goal",
+        "modality"
+      ],
+      "optional_fields": [
+        "location",
+        "frequency",
+        "budget_per_hour"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "online",
+          "hybrid"
+        ],
+        "required": false
+      },
+      "budget_policy": "per_hour",
+      "examples": [
+        "Entrenador personal en Sant Cugat",
+        "Quiero entrenar fuerza 2 veces por semana"
+      ]
+    },
+    {
+      "intent_domain": "health_wellbeing",
+      "intent_type": "massage_wellness",
+      "display_name": "Masajista / wellness",
+      "required_fields": [
+        "service_type",
+        "modality"
+      ],
+      "optional_fields": [
+        "location",
+        "budget_total",
+        "date"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "exact_address"
+        ],
+        "required": false
+      },
+      "budget_policy": "optional_fixed",
+      "examples": [
+        "Masaje descontracturante a domicilio",
+        "Busco spa para pareja"
+      ]
+    },
+    {
+      "intent_domain": "home_services",
+      "intent_type": "house_cleaning",
+      "display_name": "Limpieza del hogar",
+      "required_fields": [
+        "service_mode",
+        "location"
+      ],
+      "optional_fields": [
+        "frequency",
+        "home_size",
+        "budget_per_hour"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address",
+          "city"
+        ],
+        "required": true
+      },
+      "budget_policy": "per_hour",
+      "examples": [
+        "Busco persona para limpieza semanal",
+        "Limpieza a fondo de piso"
+      ]
+    },
+    {
+      "intent_domain": "home_services",
+      "intent_type": "babysitting",
+      "display_name": "Canguro / cuidado infantil",
+      "required_fields": [
+        "location",
+        "schedule_or_dates"
+      ],
+      "optional_fields": [
+        "children_ages",
+        "frequency",
+        "budget_per_hour"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address",
+          "city"
+        ],
+        "required": true
+      },
+      "budget_policy": "per_hour",
+      "examples": [
+        "Necesito canguro para dos niños",
+        "Cuidado puntual este sábado"
+      ]
+    },
+    {
+      "intent_domain": "home_services",
+      "intent_type": "elderly_care",
+      "display_name": "Cuidado de mayores",
+      "required_fields": [
+        "location",
+        "service_mode"
+      ],
+      "optional_fields": [
+        "schedule",
+        "dependency_level",
+        "budget_per_hour"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address",
+          "city"
+        ],
+        "required": true
+      },
+      "budget_policy": "per_hour",
+      "examples": [
+        "Busco cuidadora para persona mayor",
+        "Acompañamiento diario"
+      ]
+    },
+    {
+      "intent_domain": "home_services",
+      "intent_type": "moving",
+      "display_name": "Mudanzas",
+      "required_fields": [
+        "origin",
+        "destination",
+        "approx_date"
+      ],
+      "optional_fields": [
+        "volume",
+        "lift",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "multi_location"
+        ],
+        "required": true
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Mudanza de piso en Sant Cugat",
+        "Mudanza Barcelona a Girona"
+      ]
+    },
+    {
+      "intent_domain": "home_services",
+      "intent_type": "gardening",
+      "display_name": "Jardinería",
+      "required_fields": [
+        "location",
+        "job_type"
+      ],
+      "optional_fields": [
+        "size",
+        "frequency",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address",
+          "city"
+        ],
+        "required": true
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Mantenimiento de jardín",
+        "Poda y limpieza de parcela"
+      ]
+    },
+    {
+      "intent_domain": "construction",
+      "intent_type": "bathroom_renovation",
+      "display_name": "Reforma de baño",
+      "required_fields": [
+        "location",
+        "scope"
+      ],
+      "optional_fields": [
+        "budget_total",
+        "start_date",
+        "materials"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address"
+        ],
+        "required": true
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Reforma completa de baño",
+        "Cambiar ducha por bañera"
+      ]
+    },
+    {
+      "intent_domain": "construction",
+      "intent_type": "kitchen_renovation",
+      "display_name": "Reforma de cocina",
+      "required_fields": [
+        "location",
+        "scope"
+      ],
+      "optional_fields": [
+        "budget_total",
+        "date",
+        "materials"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address"
+        ],
+        "required": true
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Reforma integral de cocina",
+        "Cambiar encimera y muebles"
+      ]
+    },
+    {
+      "intent_domain": "construction",
+      "intent_type": "home_renovation_full",
+      "display_name": "Reforma integral vivienda",
+      "required_fields": [
+        "location",
+        "scope_or_area"
+      ],
+      "optional_fields": [
+        "budget_total",
+        "date",
+        "project"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address"
+        ],
+        "required": true
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Reforma integral de piso",
+        "Actualizar instalación y acabados"
+      ]
+    },
+    {
+      "intent_domain": "construction",
+      "intent_type": "small_masonry",
+      "display_name": "Albañilería pequeña",
+      "required_fields": [
+        "location",
+        "job_type"
+      ],
+      "optional_fields": [
+        "urgency",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address"
+        ],
+        "required": true
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Tapar una rozadura y pintar",
+        "Levantar tabique pequeño"
+      ]
+    },
+    {
+      "intent_domain": "construction",
+      "intent_type": "architect_interior_design",
+      "display_name": "Arquitecto / interiorista",
+      "required_fields": [
+        "project_type",
+        "location"
+      ],
+      "optional_fields": [
+        "square_meters",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address",
+          "city"
+        ],
+        "required": true
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Interiorista para piso nuevo",
+        "Arquitecto para redistribución"
+      ]
+    },
+    {
+      "intent_domain": "technical_repairs",
+      "intent_type": "plumber",
+      "display_name": "Fontanero",
+      "required_fields": [
+        "location",
+        "problem"
+      ],
+      "optional_fields": [
+        "urgency",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address"
+        ],
+        "required": true
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Fuga en lavabo",
+        "Cambiar grifo cocina"
+      ]
+    },
+    {
+      "intent_domain": "technical_repairs",
+      "intent_type": "electrician",
+      "display_name": "Electricista",
+      "required_fields": [
+        "location",
+        "problem"
+      ],
+      "optional_fields": [
+        "urgency",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address"
+        ],
+        "required": true
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Salta el diferencial",
+        "Instalar enchufes nuevos"
+      ]
+    },
+    {
+      "intent_domain": "technical_repairs",
+      "intent_type": "carpenter",
+      "display_name": "Carpintero",
+      "required_fields": [
+        "location",
+        "job_type"
+      ],
+      "optional_fields": [
+        "measures",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address",
+          "city"
+        ],
+        "required": true
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Armario a medida",
+        "Reparar puerta interior"
+      ]
+    },
+    {
+      "intent_domain": "technical_repairs",
+      "intent_type": "locksmith",
+      "display_name": "Cerrajero",
+      "required_fields": [
+        "location",
+        "problem"
+      ],
+      "optional_fields": [
+        "urgency",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address"
+        ],
+        "required": true
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Abrir puerta",
+        "Cambiar cerradura"
+      ]
+    },
+    {
+      "intent_domain": "technical_repairs",
+      "intent_type": "appliance_repair",
+      "display_name": "Reparación de electrodomésticos",
+      "required_fields": [
+        "appliance_type",
+        "location",
+        "fault"
+      ],
+      "optional_fields": [
+        "brand",
+        "urgency",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address",
+          "city"
+        ],
+        "required": true
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Lavadora no centrifuga",
+        "Reparar frigorífico"
+      ]
+    },
+    {
+      "intent_domain": "automotive",
+      "intent_type": "used_car_purchase",
+      "display_name": "Compra de coche usado",
+      "required_fields": [
+        "budget_max",
+        "vehicle_type_or_model"
+      ],
+      "optional_fields": [
+        "search_location",
+        "fuel_type",
+        "max_km",
+        "financing"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "area",
+          "radius_from_point"
+        ],
+        "required": false
+      },
+      "budget_policy": "required_range",
+      "examples": [
+        "Busco SUV usado hasta 20.000 €",
+        "Quiero comprar Toyota híbrido cerca de Barcelona"
+      ]
+    },
+    {
+      "intent_domain": "automotive",
+      "intent_type": "new_car_purchase",
+      "display_name": "Compra de coche nuevo",
+      "required_fields": [
+        "model_or_vehicle_type",
+        "approx_budget"
+      ],
+      "optional_fields": [
+        "fuel_type",
+        "financing",
+        "search_location"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "area"
+        ],
+        "required": false
+      },
+      "budget_policy": "required_range",
+      "examples": [
+        "Quiero comprar un Tesla Model 3",
+        "Busco coche familiar nuevo"
+      ]
+    },
+    {
+      "intent_domain": "automotive",
+      "intent_type": "mechanic_workshop",
+      "display_name": "Taller mecánico",
+      "required_fields": [
+        "problem",
+        "location"
+      ],
+      "optional_fields": [
+        "brand_model",
+        "urgency",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "radius_from_point"
+        ],
+        "required": true
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Necesito revisar frenos",
+        "Avería de motor en Terrassa"
+      ]
+    },
+    {
+      "intent_domain": "automotive",
+      "intent_type": "body_paint",
+      "display_name": "Chapa y pintura",
+      "required_fields": [
+        "damage",
+        "location"
+      ],
+      "optional_fields": [
+        "brand_model",
+        "insurance",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "radius_from_point"
+        ],
+        "required": true
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Arañazo lateral",
+        "Golpe en parachoques"
+      ]
+    },
+    {
+      "intent_domain": "automotive",
+      "intent_type": "car_rental",
+      "display_name": "Alquiler de coche / movilidad puntual",
+      "required_fields": [
+        "dates",
+        "location"
+      ],
+      "optional_fields": [
+        "vehicle_type",
+        "budget_per_day"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "area"
+        ],
+        "required": true
+      },
+      "budget_policy": "per_day",
+      "examples": [
+        "Necesito coche 3 días en Menorca",
+        "Alquilar furgoneta en Barcelona"
+      ]
+    },
+    {
+      "intent_domain": "new_products",
+      "intent_type": "new_electronics",
+      "display_name": "Electrónica nueva",
+      "required_fields": [
+        "product_type"
+      ],
+      "optional_fields": [
+        "budget_min",
+        "budget_max",
+        "brand",
+        "location"
+      ],
+      "location_policy": {
+        "allowed": [
+          "none",
+          "city",
+          "area"
+        ],
+        "required": false
+      },
+      "budget_policy": "optional_range",
+      "examples": [
+        "Quiero comprar portátil para programar",
+        "Busco iPhone nuevo"
+      ]
+    },
+    {
+      "intent_domain": "new_products",
+      "intent_type": "new_appliance",
+      "display_name": "Electrodoméstico nuevo",
+      "required_fields": [
+        "product_type"
+      ],
+      "optional_fields": [
+        "measures",
+        "budget_min",
+        "budget_max",
+        "location"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "area"
+        ],
+        "required": false
+      },
+      "budget_policy": "optional_range",
+      "examples": [
+        "Busco frigorífico combi",
+        "Necesito lavadora estrecha"
+      ]
+    },
+    {
+      "intent_domain": "new_products",
+      "intent_type": "new_furniture",
+      "display_name": "Mobiliario nuevo",
+      "required_fields": [
+        "product_type"
+      ],
+      "optional_fields": [
+        "measures",
+        "style",
+        "budget_min",
+        "budget_max",
+        "location"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "area"
+        ],
+        "required": false
+      },
+      "budget_policy": "optional_range",
+      "examples": [
+        "Sofá de 3 plazas",
+        "Mesa comedor extensible"
+      ]
+    },
+    {
+      "intent_domain": "new_products",
+      "intent_type": "new_fashion",
+      "display_name": "Moda / calzado nuevo",
+      "required_fields": [
+        "product_type"
+      ],
+      "optional_fields": [
+        "size",
+        "budget_min",
+        "budget_max",
+        "brand"
+      ],
+      "location_policy": {
+        "allowed": [
+          "none",
+          "area"
+        ],
+        "required": false
+      },
+      "budget_policy": "optional_range",
+      "examples": [
+        "Zapatillas running",
+        "Vestido para boda"
+      ]
+    },
+    {
+      "intent_domain": "new_products",
+      "intent_type": "new_kids_product",
+      "display_name": "Producto infantil nuevo",
+      "required_fields": [
+        "product_type"
+      ],
+      "optional_fields": [
+        "age",
+        "budget_min",
+        "budget_max",
+        "location"
+      ],
+      "location_policy": {
+        "allowed": [
+          "none",
+          "area"
+        ],
+        "required": false
+      },
+      "budget_policy": "optional_range",
+      "examples": [
+        "Silla coche grupo 2",
+        "Cuna evolutiva"
+      ]
+    },
+    {
+      "intent_domain": "used_products",
+      "intent_type": "used_camera",
+      "display_name": "Cámara usada",
+      "required_fields": [
+        "product_or_model",
+        "budget_max"
+      ],
+      "optional_fields": [
+        "location",
+        "condition"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "area"
+        ],
+        "required": false
+      },
+      "budget_policy": "required_range",
+      "examples": [
+        "Sony Alpha IV usada por menos de 1800 €"
+      ]
+    },
+    {
+      "intent_domain": "used_products",
+      "intent_type": "used_bike",
+      "display_name": "Bicicleta usada",
+      "required_fields": [
+        "bike_type",
+        "budget_max"
+      ],
+      "optional_fields": [
+        "size",
+        "location",
+        "condition"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "area"
+        ],
+        "required": false
+      },
+      "budget_policy": "required_range",
+      "examples": [
+        "Busco bici gravel talla M"
+      ]
+    },
+    {
+      "intent_domain": "used_products",
+      "intent_type": "used_instrument",
+      "display_name": "Instrumento musical usado",
+      "required_fields": [
+        "instrument",
+        "budget_max"
+      ],
+      "optional_fields": [
+        "brand",
+        "location"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "area"
+        ],
+        "required": false
+      },
+      "budget_policy": "required_range",
+      "examples": [
+        "Busco piano digital usado"
+      ]
+    },
+    {
+      "intent_domain": "used_products",
+      "intent_type": "used_furniture",
+      "display_name": "Muebles usados",
+      "required_fields": [
+        "product_type"
+      ],
+      "optional_fields": [
+        "budget_min",
+        "budget_max",
+        "measures",
+        "location"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "area"
+        ],
+        "required": false
+      },
+      "budget_policy": "optional_range",
+      "examples": [
+        "Busco armario usado de 2 metros"
+      ]
+    },
+    {
+      "intent_domain": "used_products",
+      "intent_type": "used_tech",
+      "display_name": "Tecnología usada",
+      "required_fields": [
+        "product_type",
+        "budget_max"
+      ],
+      "optional_fields": [
+        "brand_model",
+        "location"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "area"
+        ],
+        "required": false
+      },
+      "budget_policy": "required_range",
+      "examples": [
+        "Busco MacBook usado",
+        "iPad segunda mano"
+      ]
+    },
+    {
+      "intent_domain": "selling",
+      "intent_type": "sell_car",
+      "display_name": "Venta de coche",
+      "required_fields": [
+        "brand_model",
+        "price",
+        "location"
+      ],
+      "optional_fields": [
+        "km",
+        "year",
+        "condition"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "exact_address"
+        ],
+        "required": true
+      },
+      "budget_policy": "required_fixed",
+      "examples": [
+        "Vendo BMW Serie 1"
+      ]
+    },
+    {
+      "intent_domain": "selling",
+      "intent_type": "sell_house",
+      "display_name": "Venta de vivienda",
+      "required_fields": [
+        "location",
+        "price",
+        "property_type"
+      ],
+      "optional_fields": [
+        "square_meters",
+        "rooms"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address",
+          "city"
+        ],
+        "required": true
+      },
+      "budget_policy": "required_fixed",
+      "examples": [
+        "Vendo piso en Rubí"
+      ]
+    },
+    {
+      "intent_domain": "selling",
+      "intent_type": "sell_used_product",
+      "display_name": "Venta de producto usado general",
+      "required_fields": [
+        "product",
+        "price"
+      ],
+      "optional_fields": [
+        "location",
+        "condition"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "area"
+        ],
+        "required": false
+      },
+      "budget_policy": "required_fixed",
+      "examples": [
+        "Vendo cámara Canon"
+      ]
+    },
+    {
+      "intent_domain": "selling",
+      "intent_type": "sell_equipment",
+      "display_name": "Venta de maquinaria o equipo",
+      "required_fields": [
+        "product",
+        "price"
+      ],
+      "optional_fields": [
+        "location",
+        "condition"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "area"
+        ],
+        "required": false
+      },
+      "budget_policy": "required_fixed",
+      "examples": [
+        "Vendo cortacésped profesional"
+      ]
+    },
+    {
+      "intent_domain": "selling",
+      "intent_type": "sell_business_asset",
+      "display_name": "Venta de negocio / activo especial",
+      "required_fields": [
+        "asset_type",
+        "location"
+      ],
+      "optional_fields": [
+        "price",
+        "revenue"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "area"
+        ],
+        "required": true
+      },
+      "budget_policy": "optional_fixed",
+      "examples": [
+        "Vendo camping pequeño",
+        "Traspaso restaurante"
+      ]
+    },
+    {
+      "intent_domain": "rentals",
+      "intent_type": "rent_home",
+      "display_name": "Alquiler de vivienda habitual",
+      "required_fields": [
+        "area",
+        "monthly_budget_max"
+      ],
+      "optional_fields": [
+        "rooms",
+        "furnished",
+        "move_in_date"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "area"
+        ],
+        "required": true
+      },
+      "budget_policy": "monthly",
+      "examples": [
+        "Busco piso de alquiler en Sant Cugat"
+      ]
+    },
+    {
+      "intent_domain": "rentals",
+      "intent_type": "rent_holiday_home",
+      "display_name": "Alquiler vacacional",
+      "required_fields": [
+        "destination",
+        "dates",
+        "people"
+      ],
+      "optional_fields": [
+        "budget_total",
+        "rooms"
+      ],
+      "location_policy": {
+        "allowed": [
+          "destination",
+          "area"
+        ],
+        "required": true
+      },
+      "budget_policy": "optional_fixed",
+      "examples": [
+        "Quiero alquilar casa en la Costa Brava"
+      ]
+    },
+    {
+      "intent_domain": "rentals",
+      "intent_type": "rent_event_space",
+      "display_name": "Alquiler de sala / espacio",
+      "required_fields": [
+        "location",
+        "date",
+        "use_case"
+      ],
+      "optional_fields": [
+        "people",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "exact_address"
+        ],
+        "required": true
+      },
+      "budget_policy": "optional_fixed",
+      "examples": [
+        "Sala para curso de 20 personas"
+      ]
+    },
+    {
+      "intent_domain": "rentals",
+      "intent_type": "rent_vehicle",
+      "display_name": "Alquiler de vehículo",
+      "required_fields": [
+        "dates",
+        "location"
+      ],
+      "optional_fields": [
+        "vehicle_type",
+        "budget_per_day"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city"
+        ],
+        "required": true
+      },
+      "budget_policy": "per_day",
+      "examples": [
+        "Quiero alquilar furgoneta"
+      ]
+    },
+    {
+      "intent_domain": "rentals",
+      "intent_type": "rent_material",
+      "display_name": "Alquiler de material / maquinaria",
+      "required_fields": [
+        "material_type",
+        "dates"
+      ],
+      "optional_fields": [
+        "location",
+        "budget_per_day"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "area"
+        ],
+        "required": false
+      },
+      "budget_policy": "per_day",
+      "examples": [
+        "Busco andamio para 1 semana"
+      ]
+    },
+    {
+      "intent_domain": "residential_real_estate",
+      "intent_type": "buy_home",
+      "display_name": "Compra de vivienda",
+      "required_fields": [
+        "area",
+        "budget_max"
+      ],
+      "optional_fields": [
+        "property_type",
+        "rooms",
+        "square_meters"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "area",
+          "radius_from_point"
+        ],
+        "required": true
+      },
+      "budget_policy": "required_range",
+      "examples": [
+        "Quiero comprar piso en Sant Cugat"
+      ]
+    },
+    {
+      "intent_domain": "residential_real_estate",
+      "intent_type": "sell_home",
+      "display_name": "Venta de vivienda",
+      "required_fields": [
+        "property_type",
+        "location"
+      ],
+      "optional_fields": [
+        "price",
+        "rooms",
+        "square_meters"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address",
+          "city"
+        ],
+        "required": true
+      },
+      "budget_policy": "optional_fixed",
+      "examples": [
+        "Vendo casa unifamiliar"
+      ]
+    },
+    {
+      "intent_domain": "residential_real_estate",
+      "intent_type": "find_real_estate_agent",
+      "display_name": "Búsqueda de agente inmobiliario",
+      "required_fields": [
+        "operation",
+        "area"
+      ],
+      "optional_fields": [
+        "property_type",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "area"
+        ],
+        "required": true
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Busco agente para vender piso"
+      ]
+    },
+    {
+      "intent_domain": "residential_real_estate",
+      "intent_type": "pre_sale_renovation",
+      "display_name": "Reforma previa a venta/alquiler",
+      "required_fields": [
+        "location",
+        "goal"
+      ],
+      "optional_fields": [
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address"
+        ],
+        "required": true
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Poner piso a punto para alquilar"
+      ]
+    },
+    {
+      "intent_domain": "vacation_real_estate",
+      "intent_type": "buy_second_home",
+      "display_name": "Compra de segunda residencia",
+      "required_fields": [
+        "area",
+        "budget_max"
+      ],
+      "optional_fields": [
+        "property_type",
+        "square_meters"
+      ],
+      "location_policy": {
+        "allowed": [
+          "area",
+          "destination"
+        ],
+        "required": true
+      },
+      "budget_policy": "required_range",
+      "examples": [
+        "Busco casa en costa catalana"
+      ]
+    },
+    {
+      "intent_domain": "vacation_real_estate",
+      "intent_type": "vacation_investment",
+      "display_name": "Inversión vacacional",
+      "required_fields": [
+        "area",
+        "budget_max"
+      ],
+      "optional_fields": [
+        "target_roi"
+      ],
+      "location_policy": {
+        "allowed": [
+          "area"
+        ],
+        "required": true
+      },
+      "budget_policy": "required_range",
+      "examples": [
+        "Busco apartamento para inversión vacacional"
+      ]
+    },
+    {
+      "intent_domain": "vacation_real_estate",
+      "intent_type": "vacation_property_management",
+      "display_name": "Gestión de alquiler vacacional",
+      "required_fields": [
+        "location"
+      ],
+      "optional_fields": [
+        "property_type",
+        "volume"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "area"
+        ],
+        "required": true
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Busco empresa que gestione apartamento turístico"
+      ]
+    },
+    {
+      "intent_domain": "events",
+      "intent_type": "event_venue",
+      "display_name": "Espacio para evento",
+      "required_fields": [
+        "date",
+        "people",
+        "area"
+      ],
+      "optional_fields": [
+        "budget_total",
+        "style"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "area"
+        ],
+        "required": true
+      },
+      "budget_policy": "optional_fixed",
+      "examples": [
+        "Busco finca para boda"
+      ]
+    },
+    {
+      "intent_domain": "events",
+      "intent_type": "event_photographer",
+      "display_name": "Fotógrafo de evento",
+      "required_fields": [
+        "event_type",
+        "date",
+        "location"
+      ],
+      "optional_fields": [
+        "budget_total",
+        "duration"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address",
+          "city"
+        ],
+        "required": true
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Fotógrafo para comunión"
+      ]
+    },
+    {
+      "intent_domain": "events",
+      "intent_type": "dj_music",
+      "display_name": "Música / DJ",
+      "required_fields": [
+        "date",
+        "location",
+        "event_type"
+      ],
+      "optional_fields": [
+        "budget_total",
+        "music_style"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address",
+          "city"
+        ],
+        "required": true
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "DJ para fiesta privada"
+      ]
+    },
+    {
+      "intent_domain": "events",
+      "intent_type": "wedding_planner_decor",
+      "display_name": "Decoración / wedding planner",
+      "required_fields": [
+        "event_type",
+        "date",
+        "location"
+      ],
+      "optional_fields": [
+        "budget_total",
+        "style"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address",
+          "city"
+        ],
+        "required": true
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Wedding planner en Barcelona"
+      ]
+    },
+    {
+      "intent_domain": "events",
+      "intent_type": "kids_animation",
+      "display_name": "Animación infantil",
+      "required_fields": [
+        "date",
+        "location",
+        "children_count"
+      ],
+      "optional_fields": [
+        "budget_total",
+        "theme"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address",
+          "city"
+        ],
+        "required": true
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Animador para cumpleaños infantil"
+      ]
+    },
+    {
+      "intent_domain": "personal_services",
+      "intent_type": "art_teacher",
+      "display_name": "Profesor de música / arte",
+      "required_fields": [
+        "discipline",
+        "modality"
+      ],
+      "optional_fields": [
+        "level",
+        "location",
+        "budget_per_hour"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "online",
+          "hybrid"
+        ],
+        "required": false
+      },
+      "budget_policy": "per_hour",
+      "examples": [
+        "Clases de dibujo para adultos"
+      ]
+    },
+    {
+      "intent_domain": "personal_services",
+      "intent_type": "companionship",
+      "display_name": "Cuidado / acompañamiento personal",
+      "required_fields": [
+        "service_type",
+        "location"
+      ],
+      "optional_fields": [
+        "schedule",
+        "budget_per_hour"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address",
+          "city"
+        ],
+        "required": true
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Acompañamiento a médico"
+      ]
+    },
+    {
+      "intent_domain": "personal_services",
+      "intent_type": "personal_assistant",
+      "display_name": "Asistente personal / recados",
+      "required_fields": [
+        "location",
+        "task_type"
+      ],
+      "optional_fields": [
+        "frequency",
+        "budget_per_hour"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "exact_address"
+        ],
+        "required": true
+      },
+      "budget_policy": "per_hour",
+      "examples": [
+        "Necesito ayuda con recados"
+      ]
+    },
+    {
+      "intent_domain": "personal_services",
+      "intent_type": "home_organizer",
+      "display_name": "Organización del hogar / mudanza ligera",
+      "required_fields": [
+        "location",
+        "task_type"
+      ],
+      "optional_fields": [
+        "hours",
+        "budget_per_hour"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address"
+        ],
+        "required": true
+      },
+      "budget_policy": "per_hour",
+      "examples": [
+        "Ayuda para ordenar trastero"
+      ]
+    },
+    {
+      "intent_domain": "beauty",
+      "intent_type": "hairdresser",
+      "display_name": "Peluquería",
+      "required_fields": [
+        "service",
+        "modality"
+      ],
+      "optional_fields": [
+        "location",
+        "date",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "exact_address"
+        ],
+        "required": false
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Peluquera a domicilio"
+      ]
+    },
+    {
+      "intent_domain": "beauty",
+      "intent_type": "makeup",
+      "display_name": "Maquillaje",
+      "required_fields": [
+        "date",
+        "service"
+      ],
+      "optional_fields": [
+        "location",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address",
+          "city"
+        ],
+        "required": false
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Maquilladora para boda"
+      ]
+    },
+    {
+      "intent_domain": "beauty",
+      "intent_type": "nails_esthetics",
+      "display_name": "Uñas / estética",
+      "required_fields": [
+        "service"
+      ],
+      "optional_fields": [
+        "location",
+        "date",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "exact_address"
+        ],
+        "required": false
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Manicura a domicilio"
+      ]
+    },
+    {
+      "intent_domain": "beauty",
+      "intent_type": "beauty_treatment",
+      "display_name": "Tratamientos estéticos",
+      "required_fields": [
+        "treatment_type"
+      ],
+      "optional_fields": [
+        "city",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city"
+        ],
+        "required": false
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Limpieza facial en Sant Cugat"
+      ]
+    },
+    {
+      "intent_domain": "pets",
+      "intent_type": "dog_walker",
+      "display_name": "Paseador de perros",
+      "required_fields": [
+        "location",
+        "schedule_or_frequency"
+      ],
+      "optional_fields": [
+        "dog_size",
+        "budget_per_hour"
+      ],
+      "location_policy": {
+        "allowed": [
+          "exact_address",
+          "city"
+        ],
+        "required": true
+      },
+      "budget_policy": "per_hour",
+      "examples": [
+        "Pasear perro entre semana"
+      ]
+    },
+    {
+      "intent_domain": "pets",
+      "intent_type": "pet_sitter",
+      "display_name": "Cuidador de mascotas",
+      "required_fields": [
+        "pet_type",
+        "dates",
+        "modality"
+      ],
+      "optional_fields": [
+        "location",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "exact_address"
+        ],
+        "required": false
+      },
+      "budget_policy": "optional_fixed",
+      "examples": [
+        "Cuidado de gato en agosto"
+      ]
+    },
+    {
+      "intent_domain": "pets",
+      "intent_type": "vet",
+      "display_name": "Veterinario",
+      "required_fields": [
+        "pet_type",
+        "reason"
+      ],
+      "optional_fields": [
+        "location",
+        "urgency"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city"
+        ],
+        "required": false
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Veterinario para perro con cojera"
+      ]
+    },
+    {
+      "intent_domain": "pets",
+      "intent_type": "pet_grooming",
+      "display_name": "Peluquería canina",
+      "required_fields": [
+        "pet_type",
+        "location"
+      ],
+      "optional_fields": [
+        "service",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city"
+        ],
+        "required": true
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Peluquería canina en Terrassa"
+      ]
+    },
+    {
+      "intent_domain": "professional_services",
+      "intent_type": "lawyer",
+      "display_name": "Abogado",
+      "required_fields": [
+        "legal_area"
+      ],
+      "optional_fields": [
+        "location",
+        "urgency",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "online",
+          "hybrid"
+        ],
+        "required": false
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Necesito abogado laboral",
+        "Consulta legal inmobiliaria"
+      ]
+    },
+    {
+      "intent_domain": "professional_services",
+      "intent_type": "tax_advisor",
+      "display_name": "Gestor / asesor fiscal",
+      "required_fields": [
+        "client_type",
+        "need"
+      ],
+      "optional_fields": [
+        "location",
+        "budget_monthly"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "online"
+        ],
+        "required": false
+      },
+      "budget_policy": "monthly",
+      "examples": [
+        "Busco gestor para autónomo"
+      ]
+    },
+    {
+      "intent_domain": "professional_services",
+      "intent_type": "business_consultant",
+      "display_name": "Consultor de negocio",
+      "required_fields": [
+        "area",
+        "goal"
+      ],
+      "optional_fields": [
+        "sector",
+        "budget_total",
+        "location"
+      ],
+      "location_policy": {
+        "allowed": [
+          "online",
+          "city",
+          "hybrid"
+        ],
+        "required": false
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Consultor para estrategia comercial"
+      ]
+    },
+    {
+      "intent_domain": "professional_services",
+      "intent_type": "translator_interpreter",
+      "display_name": "Traductor / intérprete",
+      "required_fields": [
+        "languages",
+        "service_type"
+      ],
+      "optional_fields": [
+        "date",
+        "location",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "online",
+          "city",
+          "exact_address"
+        ],
+        "required": false
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Traducción jurada",
+        "Intérprete para reunión"
+      ]
+    },
+    {
+      "intent_domain": "professional_services",
+      "intent_type": "notary_document_services",
+      "display_name": "Notaría / gestoría documental",
+      "required_fields": [
+        "procedure_type"
+      ],
+      "optional_fields": [
+        "location",
+        "urgency"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city"
+        ],
+        "required": false
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Trámite herencia",
+        "Constitución sociedad"
+      ]
+    },
+    {
+      "intent_domain": "b2b_services",
+      "intent_type": "packaging_supplier",
+      "display_name": "Proveedor de packaging",
+      "required_fields": [
+        "product_type",
+        "approx_volume"
+      ],
+      "optional_fields": [
+        "material",
+        "location",
+        "budget_per_unit"
+      ],
+      "location_policy": {
+        "allowed": [
+          "none",
+          "area"
+        ],
+        "required": false
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Busco packaging ecológico para alimentación"
+      ]
+    },
+    {
+      "intent_domain": "b2b_services",
+      "intent_type": "manufacturer",
+      "display_name": "Fabricación / producción",
+      "required_fields": [
+        "product",
+        "volume"
+      ],
+      "optional_fields": [
+        "material",
+        "country",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "area",
+          "none"
+        ],
+        "required": false
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Fabricante de piezas plásticas"
+      ]
+    },
+    {
+      "intent_domain": "b2b_services",
+      "intent_type": "b2b_logistics",
+      "display_name": "Logística / transporte B2B",
+      "required_fields": [
+        "origin",
+        "destination",
+        "cargo_type"
+      ],
+      "optional_fields": [
+        "frequency",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "multi_location"
+        ],
+        "required": true
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Transporte refrigerado semanal"
+      ]
+    },
+    {
+      "intent_domain": "b2b_services",
+      "intent_type": "software_vendor",
+      "display_name": "Proveedor de software",
+      "required_fields": [
+        "need"
+      ],
+      "optional_fields": [
+        "sector",
+        "company_size",
+        "budget_annual"
+      ],
+      "location_policy": {
+        "allowed": [
+          "online",
+          "none"
+        ],
+        "required": false
+      },
+      "budget_policy": "annual",
+      "examples": [
+        "Busco software ERP para pyme"
+      ]
+    },
+    {
+      "intent_domain": "b2b_services",
+      "intent_type": "marketing_agency",
+      "display_name": "Agencia de marketing",
+      "required_fields": [
+        "goal"
+      ],
+      "optional_fields": [
+        "channel",
+        "budget_monthly",
+        "sector"
+      ],
+      "location_policy": {
+        "allowed": [
+          "online",
+          "city",
+          "hybrid"
+        ],
+        "required": false
+      },
+      "budget_policy": "monthly",
+      "examples": [
+        "Agencia para captación de leads"
+      ]
+    },
+    {
+      "intent_domain": "jobs_talent",
+      "intent_type": "employee_hiring",
+      "display_name": "Contratación de empleado",
+      "required_fields": [
+        "role",
+        "modality"
+      ],
+      "optional_fields": [
+        "location",
+        "salary",
+        "seniority"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "online",
+          "hybrid"
+        ],
+        "required": false
+      },
+      "budget_policy": "annual",
+      "examples": [
+        "Busco comercial para pymes"
+      ]
+    },
+    {
+      "intent_domain": "jobs_talent",
+      "intent_type": "freelance_project",
+      "display_name": "Freelance / proyecto puntual",
+      "required_fields": [
+        "role",
+        "deliverable_or_goal"
+      ],
+      "optional_fields": [
+        "deadline",
+        "budget_total",
+        "location"
+      ],
+      "location_policy": {
+        "allowed": [
+          "online",
+          "city",
+          "hybrid"
+        ],
+        "required": false
+      },
+      "budget_policy": "optional_fixed",
+      "examples": [
+        "Necesito diseñador de logo"
+      ]
+    },
+    {
+      "intent_domain": "jobs_talent",
+      "intent_type": "recruiter_search",
+      "display_name": "Cazatalentos / recruiter",
+      "required_fields": [
+        "target_profile"
+      ],
+      "optional_fields": [
+        "location",
+        "salary"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "online"
+        ],
+        "required": false
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Busco recruiter para CTO"
+      ]
+    },
+    {
+      "intent_domain": "jobs_talent",
+      "intent_type": "corporate_training",
+      "display_name": "Formación corporativa",
+      "required_fields": [
+        "topic",
+        "modality"
+      ],
+      "optional_fields": [
+        "participants",
+        "budget_total",
+        "location"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "online",
+          "hybrid"
+        ],
+        "required": false
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Curso de ventas para equipo"
+      ]
+    },
+    {
+      "intent_domain": "tech_digital",
+      "intent_type": "web_development",
+      "display_name": "Desarrollo web",
+      "required_fields": [
+        "goal"
+      ],
+      "optional_fields": [
+        "stack",
+        "deadline",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "online",
+          "hybrid"
+        ],
+        "required": false
+      },
+      "budget_policy": "optional_fixed",
+      "examples": [
+        "Necesito web para negocio local"
+      ]
+    },
+    {
+      "intent_domain": "tech_digital",
+      "intent_type": "app_development",
+      "display_name": "Desarrollo de app",
+      "required_fields": [
+        "goal"
+      ],
+      "optional_fields": [
+        "platforms",
+        "deadline",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "online"
+        ],
+        "required": false
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Quiero una app de reservas"
+      ]
+    },
+    {
+      "intent_domain": "tech_digital",
+      "intent_type": "automation_ai",
+      "display_name": "Automatización / IA",
+      "required_fields": [
+        "problem"
+      ],
+      "optional_fields": [
+        "stack",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "online"
+        ],
+        "required": false
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Busco automatizar atención al cliente"
+      ]
+    },
+    {
+      "intent_domain": "tech_digital",
+      "intent_type": "ux_ui_design",
+      "display_name": "Diseño UX/UI",
+      "required_fields": [
+        "product_type",
+        "goal"
+      ],
+      "optional_fields": [
+        "deadline",
+        "budget_total"
+      ],
+      "location_policy": {
+        "allowed": [
+          "online"
+        ],
+        "required": false
+      },
+      "budget_policy": "optional_fixed",
+      "examples": [
+        "Diseño UX para SaaS"
+      ]
+    },
+    {
+      "intent_domain": "tech_digital",
+      "intent_type": "seo_growth",
+      "display_name": "SEO / performance digital",
+      "required_fields": [
+        "goal"
+      ],
+      "optional_fields": [
+        "current_site",
+        "budget_monthly"
+      ],
+      "location_policy": {
+        "allowed": [
+          "online"
+        ],
+        "required": false
+      },
+      "budget_policy": "monthly",
+      "examples": [
+        "Quiero mejorar el SEO local"
+      ]
+    },
+    {
+      "intent_domain": "finance_investment",
+      "intent_type": "insurance",
+      "display_name": "Seguro",
+      "required_fields": [
+        "insurance_type"
+      ],
+      "optional_fields": [
+        "location",
+        "budget_annual"
+      ],
+      "location_policy": {
+        "allowed": [
+          "area",
+          "city"
+        ],
+        "required": false
+      },
+      "budget_policy": "annual",
+      "examples": [
+        "Busco seguro de hogar"
+      ]
+    },
+    {
+      "intent_domain": "finance_investment",
+      "intent_type": "mortgage_financing",
+      "display_name": "Hipoteca / financiación",
+      "required_fields": [
+        "financing_type",
+        "approx_amount"
+      ],
+      "optional_fields": [
+        "location",
+        "term"
+      ],
+      "location_policy": {
+        "allowed": [
+          "area",
+          "none"
+        ],
+        "required": false
+      },
+      "budget_policy": "not_applicable",
+      "examples": [
+        "Quiero comparar hipotecas"
+      ]
+    },
+    {
+      "intent_domain": "finance_investment",
+      "intent_type": "financial_advisor",
+      "display_name": "Asesor financiero",
+      "required_fields": [
+        "goal"
+      ],
+      "optional_fields": [
+        "approx_assets",
+        "location"
+      ],
+      "location_policy": {
+        "allowed": [
+          "online",
+          "city"
+        ],
+        "required": false
+      },
+      "budget_policy": "market_quote",
+      "examples": [
+        "Busco asesor para invertir"
+      ]
+    },
+    {
+      "intent_domain": "finance_investment",
+      "intent_type": "investor_search",
+      "display_name": "Búsqueda de inversor",
+      "required_fields": [
+        "project_type",
+        "need"
+      ],
+      "optional_fields": [
+        "sector",
+        "location"
+      ],
+      "location_policy": {
+        "allowed": [
+          "none",
+          "city",
+          "area"
+        ],
+        "required": false
+      },
+      "budget_policy": "not_applicable",
+      "examples": [
+        "Busco inversor para startup"
+      ]
+    },
+    {
+      "intent_domain": "special_opportunities",
+      "intent_type": "partner_search",
+      "display_name": "Búsqueda de socio",
+      "required_fields": [
+        "project_type"
+      ],
+      "optional_fields": [
+        "sector",
+        "location",
+        "target_profile"
+      ],
+      "location_policy": {
+        "allowed": [
+          "none",
+          "city",
+          "area"
+        ],
+        "required": false
+      },
+      "budget_policy": "not_applicable",
+      "examples": [
+        "Busco socio técnico"
+      ]
+    },
+    {
+      "intent_domain": "special_opportunities",
+      "intent_type": "buy_business",
+      "display_name": "Compra de negocio",
+      "required_fields": [
+        "business_type",
+        "area"
+      ],
+      "optional_fields": [
+        "budget_max"
+      ],
+      "location_policy": {
+        "allowed": [
+          "city",
+          "area"
+        ],
+        "required": true
+      },
+      "budget_policy": "optional_range",
+      "examples": [
+        "Quiero comprar camping pequeño"
+      ]
+    },
+    {
+      "intent_domain": "special_opportunities",
+      "intent_type": "sell_lead_or_asset",
+      "display_name": "Venta de oportunidad / lead / activo singular",
+      "required_fields": [
+        "asset_type"
+      ],
+      "optional_fields": [
+        "location",
+        "price"
+      ],
+      "location_policy": {
+        "allowed": [
+          "none",
+          "city",
+          "area"
+        ],
+        "required": false
+      },
+      "budget_policy": "optional_fixed",
+      "examples": [
+        "Ofrezco cartera de clientes"
+      ]
+    },
+    {
+      "intent_domain": "special_opportunities",
+      "intent_type": "unclassified_candidate",
+      "display_name": "Demanda no modelada todavía",
+      "required_fields": [
+        "description"
+      ],
+      "optional_fields": [
+        "location",
+        "budget_min",
+        "budget_max",
+        "urgency"
+      ],
+      "location_policy": {
+        "allowed": [
+          "unspecified",
+          "none",
+          "city",
+          "area",
+          "online"
+        ],
+        "required": false
+      },
+      "budget_policy": "optional_range",
+      "examples": [
+        "Busco algo muy específico que no encaja en categorías previas"
+      ]
+    }
+  ],
+  "fallback_policy": {
+    "default_domain": "special_opportunities",
+    "default_intent_type": "unclassified_candidate",
+    "minimum_fields_to_extract": [
+      "summary",
+      "description",
+      "location_value",
+      "budget_min",
+      "budget_max",
+      "urgency"
+    ],
+    "behavior": {
+      "allow_dynamic_attributes": true,
+      "flag_for_review": true,
+      "promote_to_new_intent_type_if_repeated": true
+    }
+  }
+}

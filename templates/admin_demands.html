@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="section-head">
+  <div>
+    <p class="eyebrow">Depuración</p>
+    <h1>Admin Demandas</h1>
+  </div>
+</section>
+
+<section class="list-stack">
+  {% for demand in demands %}
+    <article class="card admin-demand-card">
+      <div class="list-item admin-demand-head">
+        <div>
+          <div class="title-inline">
+            <h3>{{ demand.summary }}</h3>
+            {% if debug_normalization %}
+              <button type="button" class="debug-json-trigger" data-json-target="admin-demand-{{ demand.id }}" data-json-title="Normalized demand JSON · {{ demand.summary }}">json</button>
+            {% endif %}
+          </div>
+          <p class="small-note">{{ demand.owner_name }} · {{ demand.intent_domain or "sin dominio" }} / {{ demand.intent_type }} · {{ demand.created_at.strftime("%d/%m/%Y %H:%M") if demand.created_at else "" }}</p>
+        </div>
+        <div class="thread-actions">
+          <a href="/demands/{{ demand.id }}/edit" class="row-link-tool">Editar</a>
+          <form action="/admin/demands/{{ demand.id }}/delete" method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="row-link-tool danger-link">Borrar</button>
+          </form>
+          <span class="pill soft">{{ demand.offer_count }} ofertas</span>
+          <span class="pill">{{ demand.status }}</span>
+        </div>
+      </div>
+      <p class="muted">{{ demand.normalized_payload.description or demand.attributes.get("description", "Sin descripción") }}</p>
+      <div class="meta-row">
+        <span>{{ demand.location or "Sin ubicación" }}</span>
+        <span>{{ demand.normalized_payload.required_missing_fields | length }} required missing</span>
+        <span>{{ demand.normalized_payload.recommended_missing_fields | length }} recommended missing</span>
+      </div>
+      {% if debug_normalization %}
+        <script type="application/json" id="admin-demand-{{ demand.id }}">{{ demand.normalized_payload | tojson }}</script>
+      {% endif %}
+    </article>
+  {% else %}
+    <article class="card empty-state">
+      <h3>No hay demandas para mostrar.</h3>
+    </article>
+  {% endfor %}
+</section>
+{% endblock %}

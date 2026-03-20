@@ -1,0 +1,103 @@
+<div
+  class="zone-selector"
+  data-zone-selector="true"
+  data-input-name="{{ input_name }}"
+  data-current-zone='{{ zone_value | tojson }}'
+  data-map-id="{{ map_id }}"
+  data-collapsible-map="{{ 'true' if collapsible_map else 'false' }}"
+  data-auto-submit-clear="{{ 'true' if auto_submit_clear else 'false' }}"
+  data-country-bias="{{ zone_country_bias or '' }}"
+  data-modal-mode="{{ 'true' if modal_mode else 'false' }}"
+>
+  <input type="hidden" name="{{ hidden_json_name }}" value='{{ zone_value | tojson }}' data-zone-json>
+  <input type="hidden" name="{{ hidden_label_name }}" value="{{ zone_value.label or '' }}" data-zone-label>
+
+  {% if modal_mode %}
+    <div class="zone-summary">
+      <button type="button" class="zone-summary-trigger" data-zone-open-modal>
+        <span data-zone-summary-text>{{ zone_value.label or zone_placeholder or 'Cualquier ubicación' }}</span>
+      </button>
+      <button type="button" class="zone-map-toggle" data-zone-open-modal aria-label="Abrir selector de ubicación">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3 6.5 9 4l6 2.5L21 4v13.5L15 20l-6-2.5L3 20V6.5Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"></path>
+          <path d="M9 4v13.5M15 6.5V20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"></path>
+        </svg>
+      </button>
+      <button type="button" class="zone-search-clear" data-zone-summary-clear {% if not zone_value.label %}hidden{% endif %} aria-label="Limpiar ubicación">×</button>
+    </div>
+    <div class="zone-modal" data-zone-modal hidden>
+      <div class="zone-modal-backdrop" data-zone-close-modal></div>
+      <div class="zone-modal-panel">
+        <div class="zone-modal-head">
+          <strong>Filtrar por ubicación</strong>
+          <button type="button" class="zone-modal-close" data-zone-close-modal>Cerrar</button>
+        </div>
+        <div class="zone-modal-body">
+  {% endif %}
+
+  <div class="zone-search">
+    <div class="zone-search-input-wrap">
+      <input
+        type="text"
+        value="{{ zone_value.label or '' }}"
+        placeholder="{{ zone_placeholder or 'Busca una ciudad, barrio o dirección' }}"
+        autocomplete="off"
+        data-zone-search
+      >
+      {% if not modal_mode and collapsible_map %}
+        <button type="button" class="zone-map-toggle" data-zone-toggle-map aria-label="Abrir mapa y radio">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3 6.5 9 4l6 2.5L21 4v13.5L15 20l-6-2.5L3 20V6.5Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"></path>
+            <path d="M9 4v13.5M15 6.5V20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"></path>
+          </svg>
+        </button>
+      {% endif %}
+      <button type="button" class="zone-search-clear" data-zone-clear {% if not zone_value.label %}hidden{% endif %} aria-label="Limpiar búsqueda">×</button>
+    </div>
+    <div class="zone-search-results" data-zone-results hidden></div>
+  </div>
+
+  <div class="zone-map-panel {% if collapsible_map and not modal_mode %}is-collapsed{% endif %}" data-zone-map-panel>
+    <div class="zone-map-wrap">
+      <div class="zone-map" id="{{ map_id }}" data-zone-map></div>
+      <div class="zone-map-hint" data-zone-radius-hint hidden>Pulsa sobre el mapa para cambiar centro de circunferencia</div>
+    </div>
+
+    <div class="zone-mode-switch" data-zone-mode-switch>
+      <button type="button" class="zone-mode-button" data-zone-mode="area">Área administrativa</button>
+      <button type="button" class="zone-mode-button" data-zone-mode="radius">Usar centro y radio</button>
+    </div>
+
+    <div class="zone-radius" data-zone-radius-panel>
+      <div class="zone-radius-head">
+        <strong>Radio de cobertura</strong>
+      </div>
+      <div class="zone-radius-options">
+        {% for item in radius_options %}
+          <label class="zone-radius-pill">
+            <input
+              type="radio"
+              name="{{ input_name }}__radius_bucket"
+              value="{{ item.radius_bucket }}"
+              {% if (zone_value.radius_bucket or '10km') == item.radius_bucket %}checked{% endif %}
+              data-zone-radius-option
+            >
+            <span>{{ item.label }}</span>
+          </label>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  {% if modal_mode %}
+        </div>
+        <div class="zone-modal-foot">
+          <div class="zone-modal-actions">
+            <button type="button" class="button button-ghost" data-zone-close-modal>Cancelar</button>
+            <button type="button" class="button button-primary" data-zone-apply-modal>Aplicar ubicación</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  {% endif %}
+</div>

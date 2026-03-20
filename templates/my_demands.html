@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="section-head">
+  <div>
+    <p class="eyebrow">Área privada</p>
+    <h1>Mis Demandas</h1>
+  </div>
+  <a href="/demands/new?fresh=1" class="button button-primary">Publicar nueva Demanda</a>
+</section>
+
+<section class="card tri-shell">
+  <aside class="tri-col tri-col-demand">
+    <div class="tri-scroll" id="demands-list"></div>
+  </aside>
+  <aside class="tri-col tri-col-offers">
+    <div class="tri-scroll" id="offers-list"></div>
+  </aside>
+  <section class="tri-chat">
+    <div id="demand-chat-empty" class="chat-empty"><p>Selecciona una persona ofertante para ver la conversación.</p></div>
+    <div id="demand-chat-panel" hidden>
+      <header class="chat-head" id="demand-chat-head"></header>
+      <div class="chat-scroll" id="demand-chat-messages"></div>
+      <form id="demand-chat-form" class="chat-compose compact-compose">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <textarea name="body" rows="2" placeholder="Responder..." required></textarea>
+        <button type="submit" class="button button-primary compact-send">Enviar</button>
+      </form>
+    </div>
+  </section>
+</section>
+
+<script>
+  (() => {
+    const currentUserId = {{ current_user.id if current_user else 'null' }};
+    const demandsEl = document.getElementById('demands-list');
+    const offersEl = document.getElementById('offers-list');
+    const chatEmpty = document.getElementById('demand-chat-empty');
+    const chatPanel = document.getElementById('demand-chat-panel');
+    const chatHead = document.getElementById('demand-chat-head');
+    const chatMessages = document.getElementById('demand-chat-messages');
+    const chatForm = document.getElementById('demand-chat-form');
+    const csrfToken = chatForm.querySelector('input[name="csrf_token"]').value;
+
+    let workspace = { my_demands_active: [] };
+    let selectedDemandId = null;
+    let selectedOfferId = null;
+
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (m) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+    const formatDate = (value) => value ? new Date(value).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+    const byId = (id) => workspace.my_demands_active.find((d) => d.id === id);
+    const activeDemand = () => byId(selectedDemandId);
+    const activeOffer = () => activeDemand()?.conversations?.find((o) => o.offer_id === selectedOfferId);
+
+    const ensureSelection = () => {
+      const demands = workspace.my_demands_active || [];
+      if (!demands.length) {
+        selectedDemandId = null;
+        selectedOfferId = null;
+        return;
+      }
+      if (selectedDemandId && !byId(selectedDemandId)) {
+        selectedDemandId = null;
+        selectedOfferId = null;
+      }
+      if (selectedDemandId) {
+        const demand = activeDemand();
+        if (selectedOfferId && !demand?.conversations?.some((o) => o.offer_id === selectedOfferId)) {
+          selectedOfferId = null;
+        }
+      }
+    };
+
+    const renderDemands = () => {
+      const demands = workspace.my_demands_active || [];
+      demandsEl.innerHTML = demands.map((d) => `
+        <div class="thread-row-shell">
+          <button class="thread-preview compact-row ${selectedDemandId === d.id ? 'active' : ''}" data-demand-id="${d.id}">
+            <div class="thread-preview-copy full-copy">
+              <strong>${esc(d.summary)}</strong>
+              <p>${esc(d.location || 'Sin ubicación')}</p>
+            </div>
+            <div class="thread-preview-meta">
+              ${d.has_unread ? '<span class="badge badge-hot">N</span>' : ''}
+            </div>
+          </button>
+          <div class="row-tools">
+            <a href="/demands/${d.id}/edit" class="row-link-tool">Editar</a>
+            {% if debug_normalization %}
+              <button type="button" class="debug-json-trigger" data-debug-demand-id="${d.id}">json</button>
+            {% endif %}
+          </div>
+        </div>
+      `).join('') || '<div class="chat-empty"><p>No tienes demandas activas.</p></div>';
+    };
+
+    const openDebugDemand = (demandId) => {
+      const demand = byId(Number(demandId));
+      if (!demand || !window.dmanderDebugJson) return;
+      window.dmanderDebugJson.open(demand.normalized_payload || {}, `Normalized demand JSON · ${demand.summary}`);
+    };
+
+    {% if debug_normalization %}
+    demandsEl.addEventListener('click', (event) => {
+      const debugButton = event.target.closest('[data-debug-demand-id]');
+      if (!debugButton) return;
+      event.preventDefault();
+      event.stopPropagation();
+      openDebugDemand(debugButton.dataset.debugDemandId);
+    });
+    {% endif %}
+
+    const renderOffers = () => {
+      const demand = activeDemand();
+      if (!demand) {
+        offersEl.innerHTML = '<div class="chat-empty"><p>Selecciona una demanda.</p></div>';
+        return;
+      }
+      offersEl.innerHTML = (demand.conversations || []).map((o) => `
+        <button class="thread-preview compact-row ${selectedOfferId === o.offer_id ? 'active' : ''}" data-offer-id="${o.offer_id}">
+          <div class="thread-preview-copy full-copy">
+            <strong>${esc(o.supplier_name)}</strong>
+          </div>
+          <div class="thread-preview-meta">
+            ${o.unread_count > 0 ? `<span class="badge badge-hot">${o.unread_count}</span>` : ''}
+          </div>
+        </button>
+      `).join('') || '<div class="chat-empty"><p>Esta demanda aún no tiene ofertas.</p></div>';
+    };
+
+    const renderThread = () => {
+      const demand = activeDemand();
+      const offer = activeOffer();
+      if (!demand || !offer) {
+        chatEmpty.hidden = false;
+        chatPanel.hidden = true;
+        chatMessages.innerHTML = '';
+        return;
+      }
+      chatEmpty.hidden = true;
+      chatPanel.hidden = false;
+      chatHead.innerHTML = `
+        <div><strong>${esc(offer.supplier_name)}</strong><p>${esc(demand.summary)}</p></div>
+      `;
+      chatMessages.innerHTML = (offer.messages || []).map((m) => `
+        <div class="thread-message ${m.sender_user_id === currentUserId ? 'mine' : ''}">
+          <div class="thread-meta"><strong>${esc(m.sender_name)}</strong><span>${formatDate(m.created_at)}</span></div>
+          <p>${esc(m.body)}</p>
+        </div>
+      `).join('');
+      chatForm.dataset.offerId = offer.offer_id;
+      offer.unread_count = 0;
+      demand.has_unread = (demand.conversations || []).some((item) => item.offer_id !== offer.offer_id && item.unread_count > 0);
+      renderOffers();
+      renderDemands();
+    };
+
+    const fetchWorkspace = async () => {
+      const response = await fetch('/api/workspace', { headers: { Accept: 'application/json' }});
+      if (!response.ok) return;
+      workspace = await response.json();
+      ensureSelection();
+      renderDemands();
+      renderOffers();
+      renderThread();
+    };
+
+    demandsEl.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-demand-id]');
+      if (!button) return;
+      const demandId = Number(button.dataset.demandId);
+      selectedDemandId = selectedDemandId === demandId ? null : demandId;
+      selectedOfferId = null;
+      renderDemands();
+      renderOffers();
+      renderThread();
+    });
+
+    offersEl.addEventListener('click', async (event) => {
+      const button = event.target.closest('[data-offer-id]');
+      if (!button) return;
+      const offerId = Number(button.dataset.offerId);
+      selectedOfferId = selectedOfferId === offerId ? null : offerId;
+      if (selectedOfferId) {
+        const response = await fetch(`/api/offers/${selectedOfferId}/thread`, { headers: { Accept: 'application/json' }});
+        if (response.ok) {
+          const thread = await response.json();
+          const demand = activeDemand();
+          const idx = demand.conversations.findIndex((o) => o.offer_id === selectedOfferId);
+          if (idx >= 0) demand.conversations[idx] = { ...demand.conversations[idx], ...thread, unread_count: 0 };
+        }
+      }
+      renderOffers();
+      renderThread();
+    });
+
+    chatForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const offerId = chatForm.dataset.offerId;
+      if (!offerId) return;
+      const formData = new FormData(chatForm);
+      const response = await fetch(`/api/offers/${offerId}/messages`, {
+        method: 'POST',
+        body: formData,
+        headers: { Accept: 'application/json' },
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      const demand = activeDemand();
+      const idx = demand.conversations.findIndex((o) => o.offer_id === Number(offerId));
+      if (idx >= 0) demand.conversations[idx] = { ...demand.conversations[idx], ...data.thread, unread_count: 0 };
+      chatForm.reset();
+      renderThread();
+    });
+
+    fetchWorkspace();
+    window.setInterval(fetchWorkspace, 8000);
+  })();
+</script>
+{% endblock %}

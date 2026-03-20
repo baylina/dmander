@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="auth-layout">
+  <article class="card auth-card">
+    <p class="eyebrow">Alta de usuario</p>
+    <h1>Crea tu cuenta</h1>
+    <p class="muted">Registro clásico con email y contraseña, listo para publicar y responder demandas.</p>
+
+    <form action="/signup" method="post" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>
+        <span>Nombre completo</span>
+        <input type="text" name="full_name" placeholder="Nombre y apellidos" required>
+      </label>
+      <label>
+        <span>Email</span>
+        <input type="email" name="email" placeholder="tu@email.com" required>
+      </label>
+      <label>
+        <span>Contraseña</span>
+        <input type="password" name="password" placeholder="Mínimo 8 caracteres" required>
+      </label>
+      <label>
+        <span>Confirmar contraseña</span>
+        <input type="password" name="password_confirm" placeholder="Repite tu contraseña" required>
+      </label>
+      <button type="submit" class="button button-primary full-width">Crear cuenta</button>
+    </form>
+
+    {% if oauth_providers %}
+      <div class="divider"><span>o regístrate con</span></div>
+      <div class="social-grid">
+        {% for provider in oauth_providers %}
+          <a href="/auth/{{ provider.key }}" class="social-button">
+            <span>{{ provider.icon }}</span> {{ provider.label }}
+          </a>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </article>
+</section>
+{% endblock %}
