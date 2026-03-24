@@ -29,9 +29,6 @@
             <span>Mis Ofertas</span>
             <span class="badge nav-badge" id="nav-badge-offers" {% if not notification_summary.my_offers_unread %}hidden{% endif %}>{{ notification_summary.my_offers_unread }}</span>
           </a>
-          {% if debug_normalization %}
-            <a href="/admin/demands">Admin JSON</a>
-          {% endif %}
           <a href="/demands/new?fresh=1" class="button button-cta">+ Publica</a>
           <details class="user-menu">
             <summary>{{ current_user.full_name }}</summary>

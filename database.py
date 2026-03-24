@@ -136,6 +136,8 @@ CREATE TABLE IF NOT EXISTS saved_filters (
     location_bbox JSONB DEFAULT '[]'::jsonb,
     location_geojson JSONB DEFAULT '{}'::jsonb,
     location_json JSONB DEFAULT '{}'::jsonb,
+    intent_domains JSONB DEFAULT '[]'::jsonb,
+    intent_types JSONB DEFAULT '[]'::jsonb,
     intent_type TEXT,
     created_at  TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -210,6 +212,8 @@ ALTERS_SQL = [
     "ALTER TABLE saved_filters ADD COLUMN IF NOT EXISTS location_bbox JSONB DEFAULT '[]'::jsonb;",
     "ALTER TABLE saved_filters ADD COLUMN IF NOT EXISTS location_geojson JSONB DEFAULT '{}'::jsonb;",
     "ALTER TABLE saved_filters ADD COLUMN IF NOT EXISTS location_json JSONB DEFAULT '{}'::jsonb;",
+    "ALTER TABLE saved_filters ADD COLUMN IF NOT EXISTS intent_domains JSONB DEFAULT '[]'::jsonb;",
+    "ALTER TABLE saved_filters ADD COLUMN IF NOT EXISTS intent_types JSONB DEFAULT '[]'::jsonb;",
 ]
 
 
@@ -371,6 +375,20 @@ def _matches_zone_filter(row: dict[str, Any], zone_filter: Optional[dict[str, An
     if not demand_zone or not zone_has_geometry(demand_zone):
         return False
     return zones_intersect(demand_zone, zone_filter)
+
+
+def _matches_category_filter(
+    row: dict[str, Any],
+    selected_domains: Optional[list[str]] = None,
+    selected_types: Optional[list[str]] = None,
+) -> bool:
+    selected_domains = [item for item in (selected_domains or []) if item]
+    selected_types = [item for item in (selected_types or []) if item]
+    if selected_types:
+        return (row.get("intent_type") or "") in selected_types
+    if selected_domains:
+        return (row.get("intent_domain") or "") in selected_domains
+    return True
 
 
 def _location_shape_sql(alias: str) -> str:
@@ -902,6 +920,8 @@ def get_public_demands(
     intent_type: str = "",
     viewer_user_id: Optional[int] = None,
     zone_filter: Optional[dict[str, Any]] = None,
+    intent_domains: Optional[list[str]] = None,
+    intent_types: Optional[list[str]] = None,
 ) -> list[PublicDemand]:
     """Lista demandas activas y públicas con filtros simples."""
     conn = _get_connection()
@@ -956,6 +976,8 @@ def get_public_demands(
             rows = [_hydrate_demand_row(dict(row)) for row in cur.fetchall()]
             if zone_filter:
                 rows = [row for row in rows if _matches_zone_filter(row, zone_filter)]
+            if intent_types or intent_domains:
+                rows = [row for row in rows if _matches_category_filter(row, intent_domains, intent_types)]
             return [PublicDemand.model_validate(row) for row in rows]
     finally:
         conn.close()
@@ -1269,6 +1291,7 @@ def list_saved_filters(user_id: int) -> list[dict[str, Any]]:
                 SELECT id, name, query_text, location, location_label, location_lat, location_lon,
                        location_mode, location_radius_km, location_radius_bucket, location_source, location_raw_query,
                        location_admin_level, location_bbox, location_geojson, location_json,
+                       intent_domains, intent_types,
                        intent_type, created_at
                 FROM saved_filters
                 WHERE user_id = %s
@@ -1281,7 +1304,16 @@ def list_saved_filters(user_id: int) -> list[dict[str, Any]]:
         conn.close()
 
 
-def save_filter(user_id: int, name: str, query_text: str, location: str, intent_type: str, zone_filter: Optional[dict[str, Any]] = None) -> int:
+def save_filter(
+    user_id: int,
+    name: str,
+    query_text: str,
+    location: str,
+    intent_type: str,
+    zone_filter: Optional[dict[str, Any]] = None,
+    intent_domains: Optional[list[str]] = None,
+    intent_types: Optional[list[str]] = None,
+) -> int:
     conn = _get_connection()
     try:
         with conn:
@@ -1293,9 +1325,10 @@ def save_filter(user_id: int, name: str, query_text: str, location: str, intent_
                         user_id, name, query_text, location, location_mode, location_label, location_lat, location_lon,
                         location_radius_km, location_radius_bucket, location_source, location_raw_query,
                         location_admin_level, location_bbox, location_geojson, location_json,
+                        intent_domains, intent_types,
                         intent_type
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         user_id,
@@ -1314,6 +1347,8 @@ def save_filter(user_id: int, name: str, query_text: str, location: str, intent_
                         json.dumps(zone["location_bbox"], ensure_ascii=False),
                         json.dumps(zone["location_geojson"], ensure_ascii=False),
                         json.dumps(zone["location_json"], ensure_ascii=False),
+                        json.dumps(intent_domains or [], ensure_ascii=False),
+                        json.dumps(intent_types or [], ensure_ascii=False),
                         intent_type.strip(),
                     ),
                 )
@@ -1325,7 +1360,17 @@ def save_filter(user_id: int, name: str, query_text: str, location: str, intent_
         conn.close()
 
 
-def update_filter(user_id: int, filter_id: int, name: str, query_text: str, location: str, intent_type: str, zone_filter: Optional[dict[str, Any]] = None) -> bool:
+def update_filter(
+    user_id: int,
+    filter_id: int,
+    name: str,
+    query_text: str,
+    location: str,
+    intent_type: str,
+    zone_filter: Optional[dict[str, Any]] = None,
+    intent_domains: Optional[list[str]] = None,
+    intent_types: Optional[list[str]] = None,
+) -> bool:
     conn = _get_connection()
     try:
         with conn:
@@ -1349,6 +1394,8 @@ def update_filter(user_id: int, filter_id: int, name: str, query_text: str, loca
                         location_bbox = %s,
                         location_geojson = %s,
                         location_json = %s,
+                        intent_domains = %s,
+                        intent_types = %s,
                         intent_type = %s
                     WHERE id = %s AND user_id = %s
                     """,
@@ -1368,6 +1415,8 @@ def update_filter(user_id: int, filter_id: int, name: str, query_text: str, loca
                         json.dumps(zone["location_bbox"], ensure_ascii=False),
                         json.dumps(zone["location_geojson"], ensure_ascii=False),
                         json.dumps(zone["location_json"], ensure_ascii=False),
+                        json.dumps(intent_domains or [], ensure_ascii=False),
+                        json.dumps(intent_types or [], ensure_ascii=False),
                         intent_type.strip(),
                         filter_id,
                         user_id,
@@ -1406,6 +1455,7 @@ def get_saved_filter(user_id: int, filter_id: int) -> Optional[dict[str, Any]]:
                 SELECT id, name, query_text, location, location_label, location_lat, location_lon,
                        location_mode, location_radius_km, location_radius_bucket, location_source, location_raw_query,
                        location_admin_level, location_bbox, location_geojson, location_json,
+                       intent_domains, intent_types,
                        intent_type
                 FROM saved_filters
                 WHERE id = %s AND user_id = %s

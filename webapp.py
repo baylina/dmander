@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import secrets
 import json
+import re
 from urllib.parse import urlencode
 from urllib.request import Request as UrlRequest, urlopen
 from typing import Any, Optional
@@ -58,13 +59,27 @@ from database import (
     update_filter,
     update_web_demand_from_agent,
 )
+from demand_normalizer import build_normalized_demand, merge_known_fields
 from llm_client import OpenAIClient
 from master_schema import get_master_schema_registry
 from models import DemandResult, LLMResponse, SessionState
 from normalization_rules import dynamic_required_fields, get_field_prompt
 from field_normalizers import parse_date_value
-from field_specs import is_budget_field, is_date_field, is_location_field
+from field_specs import SPANISH_MONTHS, is_budget_field, is_date_field, is_location_field
 from location_geometry import zone_has_geometry, zones_intersect
+from schema_editor import (
+    SchemaEditorError,
+    create_domain,
+    create_intent_type,
+    reorder_domains,
+    reorder_intent_types,
+    get_field_definition,
+    schema_editor_context,
+    update_domain,
+    update_intent_type,
+    delete_domain,
+    delete_intent_type,
+)
 from zone_selector import (
     RADIUS_OPTIONS,
     compact_zone_for_transport,
@@ -182,17 +197,23 @@ def build_app() -> FastAPI:
         location_source: str = "",
         location_raw_query: str = "",
         intent_type: str = "",
+        intent_domains_json: str = "",
+        intent_types_json: str = "",
         saved_filter_id: str = "",
         page: int = 1,
     ) -> HTMLResponse:
         current_user = _get_current_user(request)
         current_saved_filter = None
         selected_saved_filter_id = int(saved_filter_id) if str(saved_filter_id).strip().isdigit() else None
+        selected_domains = _parse_json_string_list(intent_domains_json)
+        selected_types = _parse_json_string_list(intent_types_json)
         has_explicit_search_inputs = bool(
             q.strip()
             or location.strip()
             or location_zone_json.strip()
             or intent_type.strip()
+            or selected_domains
+            or selected_types
             or location_label.strip()
             or location_lat is not None
             or location_lon is not None
@@ -215,7 +236,9 @@ def build_app() -> FastAPI:
                 location_source = current_saved_filter.get("location_source", "")
                 location_raw_query = current_saved_filter.get("location_raw_query", "")
                 intent_type = current_saved_filter.get("intent_type", "")
+                selected_domains, selected_types = _saved_filter_categories(current_saved_filter)
         zone_filter = _parse_zone_json(location_zone_json)
+        effective_intent_type_filter = "" if selected_types else (intent_type or "").strip()
         if not zone_filter and (location_lat is not None and location_lon is not None):
             zone_filter = normalize_zone_payload(
                 {
@@ -236,17 +259,29 @@ def build_app() -> FastAPI:
             current_saved_filter,
             q=q,
             location=location,
-            intent_type=intent_type,
+            intent_type=effective_intent_type_filter,
             zone_filter=zone_filter,
+            intent_domains=selected_domains,
+            intent_types=selected_types,
         )
-        has_active_search = bool(q.strip() or location.strip() or intent_type.strip() or has_zone_filter or selected_saved_filter_id)
+        has_active_search = bool(
+            q.strip()
+            or location.strip()
+            or effective_intent_type_filter
+            or has_zone_filter
+            or selected_saved_filter_id
+            or selected_domains
+            or selected_types
+        )
         effective_location_text = "" if has_zone_filter else location
         all_demands = get_public_demands(
             q,
             effective_location_text,
-            intent_type,
+            effective_intent_type_filter,
             current_user.id if current_user else None,
             zone_filter=zone_filter,
+            intent_domains=selected_domains,
+            intent_types=selected_types,
         )
         if zone_filter:
             all_demands = [
@@ -269,7 +304,12 @@ def build_app() -> FastAPI:
                 "search_filters": {
                     "q": q,
                     "location": location,
-                    "intent_type": intent_type,
+                    "intent_type": effective_intent_type_filter,
+                    "intent_domains": selected_domains,
+                    "intent_types": selected_types,
+                    "intent_domains_json": json.dumps(selected_domains, ensure_ascii=False),
+                    "intent_types_json": json.dumps(selected_types, ensure_ascii=False),
+                    "category_summary": _category_summary(selected_domains, selected_types),
                     "location_zone": _compact_zone_for_query(zone_filter) or default_zone_payload(),
                     "location_zone_json": json.dumps(_compact_zone_for_query(zone_filter) or default_zone_payload(), ensure_ascii=False),
                 },
@@ -281,7 +321,18 @@ def build_app() -> FastAPI:
                     current_user and has_active_search and (not current_saved_filter or not current_search_matches_saved_filter)
                 ),
                 "keyword_suggestions": _keyword_suggestions(),
-                "pagination": _home_pagination(page, total_pages, q, location, intent_type, zone_filter, selected_saved_filter_id),
+                "category_catalog": _category_catalog(),
+                "pagination": _home_pagination(
+                    page,
+                    total_pages,
+                    q,
+                    location,
+                    effective_intent_type_filter,
+                    zone_filter,
+                    selected_saved_filter_id,
+                    selected_domains,
+                    selected_types,
+                ),
             },
         )
 
@@ -395,6 +446,39 @@ def build_app() -> FastAPI:
             },
         )
 
+    @app.get("/admin", response_class=HTMLResponse)
+    async def admin_index_page(request: Request) -> HTMLResponse:
+        user = _get_current_user(request)
+        if not user:
+            _flash(request, "Necesitas iniciar sesión para acceder a esta vista.", "error")
+            return _redirect("/login")
+        if not _normalization_debug_enabled():
+            raise HTTPException(status_code=404, detail="Vista de depuración no disponible")
+        return _render(
+            request,
+            "admin_index.html",
+            {
+                "title": "Utilidades internas",
+                "admin_tools": [
+                    {
+                        "title": "Administración de Demandas",
+                        "href": "/admin/demands",
+                        "description": "Revisa demandas publicadas y elimina las que necesites junto con sus ofertas y conversaciones.",
+                    },
+                    {
+                        "title": "Administración de Schema",
+                        "href": "/admin/schema",
+                        "description": "Edita dominios, intent_type, campos requeridos y reglas de validación del master schema.",
+                    },
+                    {
+                        "title": "Tipos de Campos de Demandas",
+                        "href": "/admin/schema/types",
+                        "description": "Consulta el catálogo técnico de tipos disponibles para definir campos en las demandas.",
+                    },
+                ],
+            },
+        )
+
     @app.post("/admin/demands/{demand_id}/delete")
     async def admin_delete_demand_route(
         request: Request,
@@ -413,6 +497,155 @@ def build_app() -> FastAPI:
         else:
             _flash(request, "No he podido eliminar esa demanda.", "error")
         return _redirect("/admin/demands")
+
+    @app.get("/admin/schema", response_class=HTMLResponse)
+    async def admin_schema_page(request: Request) -> HTMLResponse:
+        user = _get_current_user(request)
+        if not user:
+            _flash(request, "Necesitas iniciar sesión para acceder a esta vista.", "error")
+            return _redirect("/login")
+        if not _normalization_debug_enabled():
+            raise HTTPException(status_code=404, detail="Vista de depuración no disponible")
+        return _render(
+            request,
+            "admin_schema.html",
+            {
+                "title": "Admin Schema",
+                **schema_editor_context(),
+            },
+        )
+
+    @app.get("/admin/schema/types", response_class=HTMLResponse)
+    async def admin_schema_types_page(request: Request) -> HTMLResponse:
+        user = _get_current_user(request)
+        if not user:
+            _flash(request, "Necesitas iniciar sesión para acceder a esta vista.", "error")
+            return _redirect("/login")
+        if not _normalization_debug_enabled():
+            raise HTTPException(status_code=404, detail="Vista de depuración no disponible")
+        return _render(
+            request,
+            "admin_schema_fields.html",
+            {
+                "title": "Tipos de campo",
+                **schema_editor_context(),
+            },
+        )
+
+    @app.get("/admin/schema/fields")
+    async def admin_schema_fields_legacy_redirect() -> RedirectResponse:
+        return _redirect("/admin/schema/types")
+
+    @app.post("/admin/schema/domains/create")
+    async def admin_schema_create_domain(request: Request) -> RedirectResponse:
+        form = await request.form()
+        _validate_csrf(request, str(form.get("csrf_token", "")))
+        if not _normalization_debug_enabled():
+            raise HTTPException(status_code=404, detail="Vista de depuración no disponible")
+        try:
+            create_domain(str(form.get("code", "")).strip(), str(form.get("name", "")).strip())
+            _flash(request, "Dominio creado.", "success")
+        except SchemaEditorError as exc:
+            _flash(request, str(exc), "error")
+        return _redirect("/admin/schema")
+
+    @app.post("/admin/schema/domains/update")
+    async def admin_schema_update_domain(request: Request) -> RedirectResponse:
+        form = await request.form()
+        _validate_csrf(request, str(form.get("csrf_token", "")))
+        if not _normalization_debug_enabled():
+            raise HTTPException(status_code=404, detail="Vista de depuración no disponible")
+        try:
+            update_domain(
+                str(form.get("original_code", "")).strip(),
+                str(form.get("code", "")).strip(),
+                str(form.get("name", "")).strip(),
+            )
+            _flash(request, "Dominio actualizado.", "success")
+        except SchemaEditorError as exc:
+            _flash(request, str(exc), "error")
+        return _redirect("/admin/schema")
+
+    @app.post("/admin/schema/domains/delete")
+    async def admin_schema_delete_domain(request: Request) -> RedirectResponse:
+        form = await request.form()
+        _validate_csrf(request, str(form.get("csrf_token", "")))
+        if not _normalization_debug_enabled():
+            raise HTTPException(status_code=404, detail="Vista de depuración no disponible")
+        try:
+            delete_domain(str(form.get("code", "")).strip())
+            _flash(request, "Dominio eliminado.", "success")
+        except SchemaEditorError as exc:
+            _flash(request, str(exc), "error")
+        return _redirect("/admin/schema")
+
+    @app.post("/admin/schema/domains/reorder")
+    async def admin_schema_reorder_domains(request: Request) -> RedirectResponse:
+        form = await request.form()
+        _validate_csrf(request, str(form.get("csrf_token", "")))
+        if not _normalization_debug_enabled():
+            raise HTTPException(status_code=404, detail="Vista de depuración no disponible")
+        try:
+            reorder_domains(_form_text_list(form, "domain_order"))
+            _flash(request, "Orden de dominios actualizado.", "success")
+        except SchemaEditorError as exc:
+            _flash(request, str(exc), "error")
+        return _redirect("/admin/schema")
+
+    @app.post("/admin/schema/intents/create")
+    async def admin_schema_create_intent(request: Request) -> RedirectResponse:
+        form = await request.form()
+        _validate_csrf(request, str(form.get("csrf_token", "")))
+        if not _normalization_debug_enabled():
+            raise HTTPException(status_code=404, detail="Vista de depuración no disponible")
+        try:
+            create_intent_type(_intent_payload_from_form(form))
+            _flash(request, "intent_type creado.", "success")
+        except SchemaEditorError as exc:
+            _flash(request, str(exc), "error")
+        return _redirect("/admin/schema")
+
+    @app.post("/admin/schema/intents/reorder")
+    async def admin_schema_reorder_intents(request: Request) -> RedirectResponse:
+        form = await request.form()
+        _validate_csrf(request, str(form.get("csrf_token", "")))
+        if not _normalization_debug_enabled():
+            raise HTTPException(status_code=404, detail="Vista de depuración no disponible")
+        try:
+            reorder_intent_types(
+                str(form.get("domain_code", "")).strip(),
+                _form_text_list(form, "intent_order"),
+            )
+            _flash(request, "Orden de intent_type actualizado.", "success")
+        except SchemaEditorError as exc:
+            _flash(request, str(exc), "error")
+        return _redirect("/admin/schema")
+
+    @app.post("/admin/schema/intents/update")
+    async def admin_schema_update_intent(request: Request) -> RedirectResponse:
+        form = await request.form()
+        _validate_csrf(request, str(form.get("csrf_token", "")))
+        if not _normalization_debug_enabled():
+            raise HTTPException(status_code=404, detail="Vista de depuración no disponible")
+        try:
+            update_intent_type(str(form.get("original_intent_type", "")).strip(), _intent_payload_from_form(form))
+            _flash(request, "intent_type actualizado.", "success")
+        except SchemaEditorError as exc:
+            _flash(request, str(exc), "error")
+        return _redirect("/admin/schema")
+
+    @app.post("/admin/schema/intents/delete")
+    async def admin_schema_delete_intent(request: Request) -> RedirectResponse:
+        form = await request.form()
+        _validate_csrf(request, str(form.get("csrf_token", "")))
+        if not _normalization_debug_enabled():
+            raise HTTPException(status_code=404, detail="Vista de depuración no disponible")
+        try:
+            delete_intent_type(str(form.get("intent_type", "")).strip())
+            _flash(request, "intent_type eliminado.", "success")
+        except SchemaEditorError as exc:
+            _flash(request, str(exc), "error")
+        return _redirect("/admin/schema")
 
     @app.get("/my-offers", response_class=HTMLResponse)
     async def my_offers_page(request: Request, selected_offer_id: int | None = None) -> HTMLResponse:
@@ -454,6 +687,8 @@ def build_app() -> FastAPI:
         location: str = Form(""),
         location_zone_json: str = Form(""),
         intent_type: str = Form(""),
+        intent_domains_json: str = Form(""),
+        intent_types_json: str = Form(""),
         filter_id: int | None = Form(None),
         save_mode: str = Form("create"),
         csrf_token: str = Form(...),
@@ -467,16 +702,38 @@ def build_app() -> FastAPI:
             _flash(request, "Ponle un nombre al filtro.", "error")
             return _redirect("/")
         zone_filter = _parse_zone_json(location_zone_json)
+        selected_domains = _parse_json_string_list(intent_domains_json)
+        selected_types = _parse_json_string_list(intent_types_json)
+        effective_intent_type = (selected_types[0] if selected_types else intent_type).strip()
         should_update = filter_id is not None and save_mode == "update"
         saved_filter_target_id: int | None = None
         if should_update:
-            if update_filter(user.id, filter_id, name, query_text, location, intent_type, zone_filter=zone_filter):
+            if update_filter(
+                user.id,
+                filter_id,
+                name,
+                query_text,
+                location,
+                effective_intent_type,
+                zone_filter=zone_filter,
+                intent_domains=selected_domains,
+                intent_types=selected_types,
+            ):
                 saved_filter_target_id = filter_id
                 _flash(request, "Filtro actualizado.", "success")
             else:
                 _flash(request, "No he podido actualizar ese filtro.", "error")
         else:
-            saved_filter_target_id = save_filter(user.id, name, query_text, location, intent_type, zone_filter=zone_filter)
+            saved_filter_target_id = save_filter(
+                user.id,
+                name,
+                query_text,
+                location,
+                effective_intent_type,
+                zone_filter=zone_filter,
+                intent_domains=selected_domains,
+                intent_types=selected_types,
+            )
             _flash(request, "Filtro guardado.", "success")
         return _redirect(f"/?saved_filter_id={saved_filter_target_id}" if saved_filter_target_id else "/")
 
@@ -636,13 +893,19 @@ def build_app() -> FastAPI:
         state = _session_to_state(wizard["state"])
         field_entries = list(wizard_view.get("field_entries", []))
         field_errors: dict[str, str] = {}
+        submitted_answers: dict[str, Any] = {}
 
         for entry in field_entries:
             field_name = entry.get("field_name", "")
             control = entry.get("control", {})
-            answer = _extract_field_answer(form, field_name, control)
+            submitted_answers[field_name] = _extract_field_answer(form, field_name, control)
+
+        for entry in field_entries:
+            field_name = entry.get("field_name", "")
+            control = entry.get("control", {})
+            answer = submitted_answers.get(field_name)
             existing_value = state.known_fields.get(field_name)
-            option_error = _validate_control_answer(answer, control, field_name)
+            option_error = _validate_control_answer(answer, control, field_name, state.known_fields, submitted_answers)
             if option_error:
                 field_errors[field_name] = option_error
                 continue
@@ -652,8 +915,14 @@ def build_app() -> FastAPI:
                     state.known_fields["location_json"] = answer
                     state.known_fields["location_value"] = answer.get("label", "")
                     state.known_fields["location"] = answer.get("label", "")
+                elif control.get("kind") == "budget_range" and isinstance(answer, dict):
+                    state.known_fields[field_name] = answer
+                    state.known_fields["budget_min"] = answer.get("min", "")
+                    state.known_fields["budget_max"] = answer.get("max", "")
                 else:
                     state.known_fields[field_name] = answer
+                    if field_name == "budget_max":
+                        state.known_fields["budget_max"] = answer
                 state.questions_asked.append(entry.get("question", field_name))
                 state.user_answers.append(_format_answer_for_review(answer, control))
             elif entry.get("category") == "required" and not existing_value:
@@ -1028,13 +1297,17 @@ def _search_matches_saved_filter(
     location: str,
     intent_type: str,
     zone_filter: Optional[dict[str, Any]],
+    intent_domains: Optional[list[str]] = None,
+    intent_types: Optional[list[str]] = None,
 ) -> bool:
     if not saved_filter:
         return False
+    saved_domains, saved_types = _saved_filter_categories(saved_filter)
     return (
         (q or "").strip() == (saved_filter.get("query_text") or "").strip()
         and (location or "").strip() == (saved_filter.get("location") or "").strip()
-        and (intent_type or "").strip() == (saved_filter.get("intent_type") or "").strip()
+        and saved_domains == _normalize_string_list(intent_domains)
+        and saved_types == _normalize_string_list(intent_types)
         and _zone_signature(zone_filter) == _zone_signature(saved_filter.get("location_json"))
     )
 
@@ -1393,6 +1666,306 @@ def _keyword_suggestions() -> list[str]:
     return sorted(suggestions)
 
 
+def _normalize_string_list(values: Optional[list[str]]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in values or []:
+        value = str(item or "").strip()
+        if not value or value in seen:
+            continue
+        normalized.append(value)
+        seen.add(value)
+    return normalized
+
+
+def _parse_json_string_list(raw: str) -> list[str]:
+    text = (raw or "").strip()
+    if not text:
+        return []
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, list):
+        return []
+    return _normalize_string_list([str(item) for item in payload if isinstance(item, str | int | float)])
+
+
+def _form_multilist(form: Any, key: str) -> list[str]:
+    try:
+        values = form.getlist(key)
+    except AttributeError:
+        value = form.get(key)
+        values = value if isinstance(value, list) else [value]
+    return _normalize_string_list([str(item) for item in values if item is not None])
+
+
+def _form_text_list(form: Any, key: str) -> list[str]:
+    try:
+        values = form.getlist(key)
+    except AttributeError:
+        value = form.get(key)
+        values = value if isinstance(value, list) else [value]
+    return [str(item or "") for item in values]
+
+
+def _field_specs_from_form(form: Any, prefix: str) -> list[dict[str, Any]]:
+    names = _form_text_list(form, f"{prefix}_field_name")
+    labels = _form_text_list(form, f"{prefix}_field_label_es")
+    value_types = _form_text_list(form, f"{prefix}_field_value_type")
+    required_flags = _form_text_list(form, f"{prefix}_field_required")
+    when_fields = _form_text_list(form, f"{prefix}_field_when_field")
+    when_operators = _form_text_list(form, f"{prefix}_field_when_operator")
+    when_values = _form_text_list(form, f"{prefix}_field_when_value")
+    choices_texts = _form_text_list(form, f"{prefix}_field_choices_text")
+    min_values = _form_text_list(form, f"{prefix}_field_min_value")
+    max_values = _form_text_list(form, f"{prefix}_field_max_value")
+    min_lengths = _form_text_list(form, f"{prefix}_field_min_length")
+    max_lengths = _form_text_list(form, f"{prefix}_field_max_length")
+    min_dates = _form_text_list(form, f"{prefix}_field_min_date")
+    max_dates = _form_text_list(form, f"{prefix}_field_max_date")
+    min_times = _form_text_list(form, f"{prefix}_field_min_time")
+    max_times = _form_text_list(form, f"{prefix}_field_max_time")
+    min_datetimes = _form_text_list(form, f"{prefix}_field_min_datetime")
+    max_datetimes = _form_text_list(form, f"{prefix}_field_max_datetime")
+    budget_fix_or_ranges = _form_text_list(form, f"{prefix}_field_budget_fix_or_range")
+    budget_units = _form_text_list(form, f"{prefix}_field_budget_unit")
+    removable_flags = _form_text_list(form, f"{prefix}_field_removable")
+    system_flags = _form_text_list(form, f"{prefix}_field_system")
+    total = max(
+        [
+            len(names),
+            len(labels),
+            len(value_types),
+            len(choices_texts),
+            len(min_values),
+            len(max_values),
+            len(min_lengths),
+            len(max_lengths),
+            len(min_dates),
+            len(max_dates),
+            len(min_times),
+            len(max_times),
+            len(min_datetimes),
+            len(max_datetimes),
+            len(when_fields),
+            len(when_operators),
+            len(when_values),
+            len(budget_fix_or_ranges),
+            len(budget_units),
+            len(removable_flags),
+            len(system_flags),
+        ],
+        default=0,
+    )
+    specs: list[dict[str, Any]] = []
+    for index in range(total):
+        field_name = (names[index] if index < len(names) else "").strip()
+        if not field_name:
+            continue
+        specs.append(
+            {
+                "name": field_name,
+                "label_es": (labels[index] if index < len(labels) else "").strip(),
+                "value_type": (value_types[index] if index < len(value_types) else "").strip(),
+                "required": str(required_flags[index] if index < len(required_flags) else "").strip() or "never",
+                "when_field": str(when_fields[index] if index < len(when_fields) else "").strip(),
+                "when_operator": str(when_operators[index] if index < len(when_operators) else "").strip() or "equals",
+                "when_value": str(when_values[index] if index < len(when_values) else "").strip(),
+                "choices_text": choices_texts[index] if index < len(choices_texts) else "",
+                "min_value": min_values[index] if index < len(min_values) else "",
+                "max_value": max_values[index] if index < len(max_values) else "",
+                "min_length": min_lengths[index] if index < len(min_lengths) else "",
+                "max_length": max_lengths[index] if index < len(max_lengths) else "",
+                "min_date": min_dates[index] if index < len(min_dates) else "",
+                "max_date": max_dates[index] if index < len(max_dates) else "",
+                "min_time": min_times[index] if index < len(min_times) else "",
+                "max_time": max_times[index] if index < len(max_times) else "",
+                "min_datetime": min_datetimes[index] if index < len(min_datetimes) else "",
+                "max_datetime": max_datetimes[index] if index < len(max_datetimes) else "",
+                "budget_fix_or_range": budget_fix_or_ranges[index] if index < len(budget_fix_or_ranges) else "",
+                "budget_unit": budget_units[index] if index < len(budget_units) else "",
+                "removable": str(removable_flags[index] if index < len(removable_flags) else "").strip() in {"1", "true", "on", "yes"},
+                "system": str(system_flags[index] if index < len(system_flags) else "").strip() in {"1", "true", "on", "yes"},
+            }
+        )
+    return specs
+
+
+def _intent_payload_from_form(form: Any) -> dict[str, Any]:
+    examples = [line.strip() for line in str(form.get("examples_text", "")).splitlines() if line.strip()]
+    field_specs = _field_specs_from_form(form, "field")
+
+    def _spec_to_field(item: dict[str, Any]) -> dict[str, Any]:
+        required_mode = str(item.get("required") or "never").strip()
+        validation: dict[str, Any] = {}
+        choices = [line.strip() for line in str(item["choices_text"] or "").splitlines() if line.strip()]
+        options: list[str] = []
+        for choice in choices:
+            if "|" in choice:
+                _, label = choice.split("|", 1)
+                options.append(label.strip() or choice.split("|", 1)[0].strip())
+            else:
+                options.append(choice)
+        if options:
+            validation["options"] = options
+            validation["allow_custom"] = True
+        for source, target in (
+            ("min_value", "min"),
+            ("max_value", "max"),
+            ("min_length", "min_length"),
+            ("max_length", "max_length"),
+            ("min_date", "min_date"),
+            ("max_date", "max_date"),
+            ("min_time", "min_time"),
+            ("max_time", "max_time"),
+            ("min_datetime", "min_datetime"),
+            ("max_datetime", "max_datetime"),
+        ):
+            raw = str(item.get(source, "") or "").strip()
+            if raw:
+                validation[target] = raw
+        if item["value_type"] == "Texto":
+            validation.setdefault("min_length", "1" if required_mode == "always" else "0")
+            validation.setdefault("max_length", "300")
+        payload = {
+            "name": item["name"],
+            "type": item["value_type"] or "Texto",
+            "description": item["label_es"] or item["name"],
+            "required": required_mode,
+            "validation": validation,
+        }
+        if required_mode == "conditional" and item.get("when_field") and item.get("when_value"):
+            when_value = str(item.get("when_value") or "").strip()
+            when_operator = str(item.get("when_operator") or "equals").strip() or "equals"
+            payload["when"] = {
+                "field": str(item.get("when_field") or "").strip(),
+                "operator": when_operator,
+                "value": [part.strip() for part in when_value.split(",") if part.strip()] if when_operator == "in" else when_value,
+            }
+        return payload
+
+    fields: list[dict[str, Any]] = []
+    for item in field_specs:
+        field_name = item.get("name")
+        if field_name == "_location":
+            fields.append(
+                {
+                    "name": "_location",
+                    "type": "System Location",
+                    "description": item.get("label_es") or "Ubicación de la demanda",
+                    "required": str(item.get("required") or "never").strip() or "never",
+                    **(
+                        {
+                            "when": {
+                                "field": str(item.get("when_field") or "").strip(),
+                                "operator": str(item.get("when_operator") or "equals").strip() or "equals",
+                                "value": [part.strip() for part in str(item.get("when_value") or "").split(",") if part.strip()]
+                                if str(item.get("when_operator") or "equals").strip() == "in"
+                                else str(item.get("when_value") or "").strip(),
+                            }
+                        }
+                        if str(item.get("required") or "never").strip() == "conditional"
+                        and str(item.get("when_field") or "").strip()
+                        and str(item.get("when_value") or "").strip()
+                        else {}
+                    ),
+                    "validation": {},
+                }
+            )
+            continue
+        if field_name == "_budget":
+            fields.append(
+                {
+                    "name": "_budget",
+                    "type": "System Budget",
+                    "description": item.get("label_es") or "Presupuesto de la demanda",
+                    "required": str(item.get("required") or "never").strip() or "never",
+                    **(
+                        {
+                            "when": {
+                                "field": str(item.get("when_field") or "").strip(),
+                                "operator": str(item.get("when_operator") or "equals").strip() or "equals",
+                                "value": [part.strip() for part in str(item.get("when_value") or "").split(",") if part.strip()]
+                                if str(item.get("when_operator") or "equals").strip() == "in"
+                                else str(item.get("when_value") or "").strip(),
+                            }
+                        }
+                        if str(item.get("required") or "never").strip() == "conditional"
+                        and str(item.get("when_field") or "").strip()
+                        and str(item.get("when_value") or "").strip()
+                        else {}
+                    ),
+                    "fix_or_range": str(item.get("budget_fix_or_range") or "").strip(),
+                    "unit": str(item.get("budget_unit") or "").strip(),
+                    "validation": {
+                        "min": str(item.get("min_value") or "").strip(),
+                        "max": str(item.get("max_value") or "").strip(),
+                    },
+                }
+            )
+            continue
+        fields.append(_spec_to_field(item))
+    return {
+        "intent_domain": str(form.get("intent_domain", "")).strip(),
+        "intent_type": str(form.get("intent_type", "")).strip(),
+        "display_name": str(form.get("display_name", "")).strip(),
+        "fields": fields,
+        "examples": examples,
+    }
+
+
+def _saved_filter_categories(saved_filter: Optional[dict[str, Any]]) -> tuple[list[str], list[str]]:
+    if not saved_filter:
+        return [], []
+    domains = _normalize_string_list(saved_filter.get("intent_domains") or [])
+    types = _normalize_string_list(saved_filter.get("intent_types") or [])
+    return domains, types
+
+
+def _category_catalog() -> list[dict[str, Any]]:
+    registry = get_master_schema_registry()
+    items: list[dict[str, Any]] = []
+    for domain_code, domain_name in sorted(registry.domains.items(), key=lambda item: item[1].lower()):
+        types = [
+            {
+                "intent_type": schema.intent_type,
+                "display_name": schema.display_name,
+            }
+            for schema in registry.intent_schemas.values()
+            if schema.intent_domain == domain_code
+        ]
+        types.sort(key=lambda item: item["display_name"].lower())
+        items.append(
+            {
+                "code": domain_code,
+                "name": domain_name,
+                "intent_types": types,
+            }
+        )
+    return items
+
+
+def _category_summary(selected_domains: Optional[list[str]], selected_types: Optional[list[str]]) -> str:
+    domains = _normalize_string_list(selected_domains)
+    types = _normalize_string_list(selected_types)
+    if not domains and not types:
+        return "Todas"
+    catalog = {item["code"]: item["name"] for item in _category_catalog()}
+    registry = get_master_schema_registry()
+    if types:
+        first_schema = registry.resolve_intent_schema(types[0])
+        first_domain_name = catalog.get(first_schema.intent_domain, first_schema.intent_domain)
+        if len(types) == 1:
+            return f"{first_domain_name} / {first_schema.display_name}"
+        if len(domains) == 1:
+            return f"{catalog.get(domains[0], domains[0])} + {len(types) - 1}"
+        return f"{len(types)} tipos"
+    if len(domains) == 1:
+        return f"{catalog.get(domains[0], domains[0])}"
+    return f"{len(domains)} dominios"
+
+
 def _redirect(path: str) -> RedirectResponse:
     return RedirectResponse(path, status_code=status.HTTP_303_SEE_OTHER)
 
@@ -1493,14 +2066,16 @@ def _prepare_demand_review(
     target_demand_id: int | None = None,
     asked_entries: list[dict[str, Any]] | None = None,
 ) -> RedirectResponse:
-    try:
-        response = agent.analyze(state)
-    except RuntimeError as exc:
-        _flash(request, f"No he podido revisar la demanda: {exc}", "error")
-        return _redirect(_wizard_return_path(wizard_mode, target_demand_id))
-
-    _apply_wizard_inference(state, response)
-    agent.update_state(state, response)
+    response, draft_demand = _build_local_review_response(state)
+    state.intent_domain = response.intent_domain
+    state.intent_type = response.intent_type
+    state.summary = response.summary
+    state.known_fields = merge_known_fields(
+        state.known_fields,
+        response.known_fields,
+        response.attributes,
+        {"dates": response.dates},
+    )
 
     has_blocking_required = bool(response.required_missing_fields)
     has_blocking_issues = bool(response.validation_issues)
@@ -1539,7 +2114,74 @@ def _prepare_demand_review(
         wizard_mode=wizard_mode,
         target_demand_id=target_demand_id,
         asked_entries=asked_entries,
+        prebuilt_demand=draft_demand,
     )
+
+
+def _build_local_review_response(state: SessionState) -> tuple[LLMResponse, DemandResult]:
+    registry = get_master_schema_registry()
+    seed_response = LLMResponse(
+        intent_domain=state.intent_domain or "",
+        intent_type=state.intent_type or "general_request",
+        confidence=1.0,
+        summary=state.summary or state.original_text,
+        description=state.original_text,
+        known_fields=state.known_fields,
+        suggested_fields=[],
+        required_missing_fields=[],
+        recommended_missing_fields=[],
+        validation_issues=[],
+        missing_fields=[],
+        next_question=None,
+        enough_information=True,
+        dates=dict(state.known_fields.get("dates") or {}),
+        attributes={},
+    )
+    draft = build_normalized_demand(
+        raw_text=state.original_text,
+        known_fields=state.known_fields,
+        response=seed_response,
+        registry=registry,
+    )
+    response = LLMResponse(
+        intent_domain=draft.intent_domain,
+        intent_type=draft.intent_type,
+        confidence=draft.confidence or 1.0,
+        summary=draft.summary,
+        description=draft.description,
+        known_fields=draft.known_fields,
+        location_mode=draft.location_mode,
+        location_value=draft.location_value,
+        budget_mode=draft.budget_mode,
+        budget_min=draft.budget_min,
+        budget_max=draft.budget_max,
+        urgency=draft.urgency,
+        dates=draft.dates,
+        attributes=draft.attributes,
+        suggested_fields=[],
+        required_missing_fields=list(draft.required_missing_fields),
+        recommended_missing_fields=list(draft.recommended_missing_fields),
+        validation_issues=list(draft.validation_issues),
+        missing_fields=list(draft.required_missing_fields or draft.recommended_missing_fields),
+        next_question=None,
+        enough_information=draft.enough_information,
+    )
+    if draft.validation_issues:
+        first_issue = next((item for item in draft.validation_issues if item.get("field_name")), draft.validation_issues[0])
+        response.next_question_field = first_issue.get("field_name")
+        response.next_question = first_issue.get("question")
+        response.enough_information = False
+    elif draft.required_missing_fields:
+        target = draft.required_missing_fields[0]
+        response.next_question_field = target
+        response.next_question = get_field_prompt(
+            target,
+            state.original_text,
+            draft.intent_type,
+            draft.intent_domain,
+        )["question"]
+        response.enough_information = False
+    return response, draft
 
 
 def _finalize_published_demand(
@@ -1551,8 +2193,9 @@ def _finalize_published_demand(
     wizard_mode: str = "create",
     target_demand_id: int | None = None,
     asked_entries: list[dict[str, Any]] | None = None,
+    prebuilt_demand: DemandResult | None = None,
 ) -> HTMLResponse | RedirectResponse:
-    demand = agent.build_final_demand(state, response)
+    demand = prebuilt_demand or agent.build_final_demand(state, response)
     if wizard_mode == "edit" and target_demand_id:
         persisted_demand = update_web_demand_from_agent(target_demand_id, user_id, demand, state)
         if not persisted_demand:
@@ -1621,22 +2264,41 @@ def _build_wizard_session(
 def _inflate_wizard_for_view(wizard: dict[str, Any]) -> dict[str, Any]:
     view = dict(wizard)
     state = _session_to_state(view.get("state", {}))
+    registry = get_master_schema_registry()
     if view.get("step") == "review":
         response = _response_from_wizard(view)
-        schema = get_master_schema_registry().resolve_intent_schema(response.intent_type)
+        schema = registry.resolve_intent_schema(response.intent_type)
         view["field_entries"] = []
         view["answered_fields"] = list(view.get("answered_fields", []))
+        view["schema_domain_display_name"] = registry.domains.get(schema.intent_domain, schema.intent_domain)
         view["schema_display_name"] = schema.display_name
-        view["schema_required_fields"] = list(schema.required_fields)
+        view["schema_required_fields"] = list(schema.active_required_fields(state.known_fields))
+        view["schema_debug_outline"] = _schema_debug_outline(schema)
         view["published_message"] = _published_confirmation_message(state, view.get("review_demand", {}))
     else:
         response = _response_from_wizard(view)
-        schema = get_master_schema_registry().resolve_intent_schema(response.intent_type)
+        schema = registry.resolve_intent_schema(response.intent_type)
         view["field_entries"] = _build_field_entries(state, response, view.get("field_errors", {}))
         view["answered_fields"] = []
+        view["schema_domain_display_name"] = registry.domains.get(schema.intent_domain, schema.intent_domain)
         view["schema_display_name"] = schema.display_name
-        view["schema_required_fields"] = list(schema.required_fields)
+        view["schema_required_fields"] = list(schema.active_required_fields(state.known_fields))
+        view["schema_debug_outline"] = _schema_debug_outline(schema)
     return view
+
+
+def _schema_debug_outline(schema) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+
+    def append_item(name: str, mode: str) -> None:
+        marker = "*" if mode == "always" else "o" if mode == "conditional" else ""
+        items.append({"name": name, "marker": marker})
+
+    append_item("location", schema.location_policy.required_mode)
+    append_item("budget", schema.budget_policy.required_mode)
+    for field in schema.fields:
+        append_item(field.name, field.required)
+    return items
 
 
 def _response_from_wizard(wizard: dict[str, Any]) -> LLMResponse:
@@ -1692,10 +2354,12 @@ def _compact_review_demand(demand: DemandResult) -> dict[str, Any]:
 
 def _apply_wizard_inference(state: SessionState, response: LLMResponse) -> None:
     schema = get_master_schema_registry().resolve_intent_schema(response.intent_type)
-    for field_name in schema.required_fields:
+    _apply_range_date_inference(state, schema)
+    for field_name in schema.active_required_fields(state.known_fields):
         if _has_content(state.known_fields.get(field_name)) or _has_content(response.known_fields.get(field_name)):
             continue
-        if is_date_field(field_name):
+        field_spec = schema.field_spec(field_name)
+        if field_spec.value_type in {"date", "checkin_date", "checkout_date"} or is_date_field(field_name):
             parsed, issue = parse_date_value(state.original_text, field_name)
             if parsed and not issue:
                 state.known_fields[field_name] = parsed
@@ -1704,6 +2368,76 @@ def _apply_wizard_inference(state: SessionState, response: LLMResponse) -> None:
             people = _infer_people_from_text(state.original_text)
             if people is not None:
                 state.known_fields[field_name] = people
+
+
+def _apply_range_date_inference(state: SessionState, schema) -> None:
+    checkin_field = ""
+    checkout_field = ""
+    for field in schema.fields:
+        if field.value_type == "checkin_date" and not checkin_field:
+            checkin_field = field.name
+        elif field.value_type == "checkout_date" and not checkout_field:
+            checkout_field = field.name
+    if not checkin_field or not checkout_field:
+        return
+    if _has_content(state.known_fields.get(checkin_field)) and _has_content(state.known_fields.get(checkout_field)):
+        return
+    inferred = _infer_stay_date_range(state.original_text)
+    if not inferred:
+        return
+    if not _has_content(state.known_fields.get(checkin_field)):
+        state.known_fields[checkin_field] = inferred["checkin"]
+    if not _has_content(state.known_fields.get(checkout_field)):
+        state.known_fields[checkout_field] = inferred["checkout"]
+
+
+def _infer_stay_date_range(raw_text: str, today: date | None = None) -> dict[str, str] | None:
+    today = today or date.today()
+    lowered = str(raw_text or "").strip().lower()
+    pattern = re.compile(
+        r"\b(?:del?\s+)?(?P<start_day>\d{1,2})"
+        r"(?:\s+de\s+(?P<start_month>[a-záéíóú]+))?"
+        r"\s+(?:al|hasta)\s+"
+        r"(?P<end_day>\d{1,2})"
+        r"(?:\s+de\s+(?P<end_month>[a-záéíóú]+))?"
+        r"(?:\s+de\s+(?P<year>\d{4}))?\b"
+    )
+    match = pattern.search(lowered)
+    if not match:
+        return None
+
+    start_day = int(match.group("start_day"))
+    end_day = int(match.group("end_day"))
+    start_month_name = (match.group("start_month") or "").strip()
+    end_month_name = (match.group("end_month") or "").strip()
+    month_name = end_month_name or start_month_name
+    if month_name not in SPANISH_MONTHS:
+        return None
+
+    start_month = SPANISH_MONTHS[start_month_name] if start_month_name in SPANISH_MONTHS else SPANISH_MONTHS[month_name]
+    end_month = SPANISH_MONTHS[end_month_name] if end_month_name in SPANISH_MONTHS else SPANISH_MONTHS[month_name]
+
+    base_year = int(match.group("year") or today.year)
+    try:
+        checkin = date(base_year, start_month, start_day)
+        checkout = date(base_year, end_month, end_day)
+    except ValueError:
+        return None
+
+    if match.group("year") is None and checkout < today:
+        try:
+            checkin = date(base_year + 1, start_month, start_day)
+            checkout = date(base_year + 1, end_month, end_day)
+        except ValueError:
+            return None
+
+    if checkout <= checkin:
+        return None
+
+    return {
+        "checkin": checkin.isoformat(),
+        "checkout": checkout.isoformat(),
+    }
 
 
 def _infer_people_from_text(raw_text: str) -> int | None:
@@ -1754,8 +2488,12 @@ def _build_field_entries(state: SessionState, response: LLMResponse, field_error
         if issue.get("field_name")
     }
 
-    required_universe: list[str] = list(schema.required_fields)
-    for field_name in dynamic_required_fields(schema.intent_domain, schema.intent_type, response.known_fields):
+    merged_known = merge_known_fields(state.known_fields, response.known_fields, {"dates": response.dates})
+    required_universe: list[str] = list(schema.active_required_fields(merged_known))
+    for field_name in schema.conditional_dependency_fields(merged_known):
+        if field_name not in required_universe:
+            required_universe.append(field_name)
+    for field_name in dynamic_required_fields(schema.intent_domain, schema.intent_type, merged_known):
         if field_name not in required_universe:
             required_universe.append(field_name)
 
@@ -1764,22 +2502,44 @@ def _build_field_entries(state: SessionState, response: LLMResponse, field_error
         if field_name not in ordered_required:
             ordered_required.append(field_name)
 
+    optional_universe: list[str] = []
+    for field_name in schema.visible_optional_fields(merged_known):
+        if field_name not in required_universe and field_name not in optional_universe:
+            optional_universe.append(field_name)
+
     entries: list[dict[str, Any]] = []
     required_missing_set = set(response.required_missing_fields)
-    for field_name in ordered_required:
-        prompt = get_field_prompt(field_name, state.original_text, response.intent_type, response.intent_domain)
+
+    if schema.location_required_for(merged_known) and "location_value" not in ordered_required:
+        ordered_required.insert(0, "location_value")
+
+    budget_entry_name = _budget_entry_name(schema)
+    if budget_entry_name and budget_entry_name not in ordered_required and budget_entry_name not in optional_universe:
+        if schema.budget_required_for(merged_known):
+            insert_at = 1 if schema.location_required_for(merged_known) else 0
+            ordered_required.insert(insert_at, budget_entry_name)
+        else:
+            optional_universe.insert(0, budget_entry_name)
+
+    latent_conditional_required: list[str] = []
+    for field in schema.fields:
+        if field.required != "conditional":
+            continue
+        if field.name not in ordered_required and field.name not in latent_conditional_required:
+            latent_conditional_required.append(field.name)
+    if schema.location_policy.required_mode == "conditional" and "location_value" not in ordered_required and "location_value" not in latent_conditional_required:
+        latent_conditional_required.insert(0, "location_value")
+    if schema.budget_policy.required_mode == "conditional" and budget_entry_name and budget_entry_name not in ordered_required and budget_entry_name not in latent_conditional_required:
+        latent_conditional_required.append(budget_entry_name)
+
+    for field_name in [*ordered_required, *latent_conditional_required]:
+        prompt = _prompt_for_entry(field_name, state.original_text, schema)
         issue = issue_map.get(field_name, {})
-        current_value = (
-            state.known_fields.get("location_json") if is_location_field(field_name) else None
-        ) or (
-            issue.get("raw_value")
-            or state.known_fields.get(field_name)
-            or response.known_fields.get(field_name)
-            or response.dates.get(field_name)
-            or ""
-        )
+        current_value = _current_value_for_entry(field_name, state, response, issue)
         issue_message = field_errors.get(field_name)
-        additional_required = (field_name in required_missing_set or not _has_content(current_value) or field_name in issue_map) and not issue_message
+        conditional_rule = _conditional_rule_for_entry(schema, field_name)
+        condition_active = field_name in ordered_required
+        additional_required = condition_active and (field_name in required_missing_set or not _has_content(current_value) or field_name in issue_map) and not issue_message
         control = _field_control(field_name, current_value, response.intent_type, response.intent_domain, state.original_text)
         entries.append(
             {
@@ -1792,13 +2552,167 @@ def _build_field_entries(state: SessionState, response: LLMResponse, field_error
                 "current_value": current_value,
                 "issue_message": issue_message,
                 "is_additional_required": additional_required,
+                "conditional_rule": conditional_rule,
+                "client_visible": condition_active,
+                "control": control,
+            }
+        )
+
+    for field_name in optional_universe:
+        prompt = _prompt_for_entry(field_name, state.original_text, schema, optional=True)
+        issue = issue_map.get(field_name, {})
+        current_value = _current_value_for_entry(field_name, state, response, issue)
+        control = _field_control(field_name, current_value, response.intent_type, response.intent_domain, state.original_text)
+        entries.append(
+            {
+                "field_name": field_name,
+                "category": "optional",
+                "field_label": _field_display_label(field_name),
+                "question": prompt["question"],
+                "placeholder": prompt.get("placeholder", ""),
+                "examples": prompt.get("examples", []),
+                "current_value": current_value,
+                "issue_message": field_errors.get(field_name),
+                "is_additional_required": False,
+                "conditional_rule": None,
+                "client_visible": True,
                 "control": control,
             }
         )
     return entries
 
 
+def _conditional_rule_for_entry(schema, field_name: str) -> dict[str, Any] | None:
+    if field_name == "location_value" and schema.location_policy.required_mode == "conditional":
+        return {
+            "field": schema.location_policy.when_field,
+            "operator": schema.location_policy.when_operator,
+            "values": list(schema.location_policy.when_values),
+        }
+    budget_entry_name = _budget_entry_name(schema)
+    if field_name == budget_entry_name and schema.budget_policy.required_mode == "conditional":
+        return {
+            "field": schema.budget_policy.when_field,
+            "operator": schema.budget_policy.when_operator,
+            "values": list(schema.budget_policy.when_values),
+        }
+    for item in schema.fields:
+        if item.name != field_name or item.required != "conditional":
+            continue
+        return {
+            "field": item.when_field,
+            "operator": item.when_operator,
+            "values": list(item.when_values),
+        }
+    return None
+
+
+def _budget_entry_name(schema) -> str:
+    if not schema.budget_fix_or_range:
+        return ""
+    return "budget_range" if schema.budget_fix_or_range == "range" else "budget_max"
+
+
+def _current_value_for_entry(field_name: str, state: SessionState, response: LLMResponse, issue: dict[str, Any]) -> Any:
+    if field_name == "budget_range":
+        min_value = (
+            issue.get("raw_value", {}).get("min")
+            if isinstance(issue.get("raw_value"), dict)
+            else None
+        ) or state.known_fields.get("budget_min") or response.known_fields.get("budget_min") or ""
+        max_value = (
+            issue.get("raw_value", {}).get("max")
+            if isinstance(issue.get("raw_value"), dict)
+            else None
+        ) or state.known_fields.get("budget_max") or response.known_fields.get("budget_max") or ""
+        return {"min": min_value, "max": max_value}
+    if field_name == "budget_max":
+        return issue.get("raw_value") or state.known_fields.get("budget_max") or response.known_fields.get("budget_max") or response.budget_max or ""
+    if is_location_field(field_name):
+        return (
+            state.known_fields.get("location_json")
+            or issue.get("raw_value")
+            or state.known_fields.get(field_name)
+            or response.known_fields.get(field_name)
+            or ""
+        )
+    return (
+        issue.get("raw_value")
+        or state.known_fields.get(field_name)
+        or response.known_fields.get(field_name)
+        or response.dates.get(field_name)
+        or ""
+    )
+
+
+def _prompt_for_entry(field_name: str, raw_text: str, schema, optional: bool = False) -> dict[str, Any]:
+    if field_name in {"budget_max", "budget_range"}:
+        return _budget_prompt_for_schema(raw_text, schema, optional=optional)
+    if field_name == "location_value":
+        return _location_prompt_for_schema(raw_text, schema, optional=optional)
+    prompt = get_field_prompt(field_name, raw_text, schema.intent_type, schema.intent_domain)
+    if optional:
+        prompt["question"] = f"{prompt['question']} (Opcional)"
+    return prompt
+
+
+def _budget_prompt_for_schema(raw_text: str, schema, optional: bool = False) -> dict[str, Any]:
+    unit_map = {
+        "one-time": "en total",
+        "per hour": "por hora",
+        "per day": "por día",
+        "per night": "por noche",
+        "per season": "por temporada",
+        "weekly": "por semana",
+        "monthly": "al mes",
+        "anual": "al año",
+    }
+    unit_text = unit_map.get(schema.budget_unit or "", "en total")
+    if schema.budget_fix_or_range == "range":
+        question = f"¿Qué rango de precio en euros (€) quieres pagar {unit_text}?"
+        placeholder = "Ej.: mínimo 20.00 € y máximo 35.50 €"
+        examples = ["20.00 y 35.50", "50 y 80.25"]
+    else:
+        question = f"¿Cuál es tu presupuesto máximo en euros (€) {unit_text}?"
+        placeholder = "Ej.: 120.50 €"
+        examples = ["50", "120.50"]
+    if optional:
+        question = f"{question} (Opcional)"
+    return {"question": question, "placeholder": placeholder, "examples": examples}
+
+
+def _location_prompt_for_schema(raw_text: str, schema, optional: bool = False) -> dict[str, Any]:
+    base = get_field_prompt("location_value", raw_text, schema.intent_type, schema.intent_domain)
+    question = base["question"]
+    if optional:
+        question = f"{question} (Opcional)"
+    return {**base, "question": question}
+
+
 def _field_control(field_name: str, current_value: Any, intent_type: str, intent_domain: str, original_text: str = "") -> dict[str, Any]:
+    field_definition = get_field_definition(field_name, intent_type)
+    schema = get_master_schema_registry().resolve_intent_schema(intent_type)
+    field_value_type = field_definition.get("value_type")
+    field_choices = field_definition.get("choices") or []
+    min_value = field_definition.get("min_value") or ""
+    max_value = field_definition.get("max_value") or ""
+    if field_name == "budget_range":
+        range_value = current_value if isinstance(current_value, dict) else {}
+        return {
+            "kind": "budget_range",
+            "min_value": str(range_value.get("min") or ""),
+            "max_value": str(range_value.get("max") or ""),
+            "min": schema.budget_policy.min_value or min_value or "0.01",
+            "max": schema.budget_policy.max_value or max_value or "",
+        }
+    if field_name == "budget_max":
+        return {
+            "kind": "number",
+            "value": current_value,
+            "step": "0.01",
+            "min": schema.budget_policy.min_value or min_value or "0.01",
+            "max": schema.budget_policy.max_value or max_value,
+        }
     if is_location_field(field_name):
         zone_payload = normalize_zone_payload(current_value if isinstance(current_value, dict) else None)
         if not zone_payload:
@@ -1815,6 +2729,16 @@ def _field_control(field_name: str, current_value: Any, intent_type: str, intent
             "value": zone_payload or default_zone_payload(),
             "radius_options": RADIUS_OPTIONS,
         }
+    if field_value_type == "location":
+        zone_payload = normalize_zone_payload(current_value if isinstance(current_value, dict) else None) or default_zone_payload()
+        if isinstance(current_value, str) and current_value.strip() and not zone_payload.get("label"):
+            zone_payload["label"] = current_value.strip()
+            zone_payload["raw_query"] = current_value.strip()
+        return {
+            "kind": "zone_selector",
+            "value": zone_payload,
+            "radius_options": RADIUS_OPTIONS,
+        }
     if field_name == "dates":
         start_value = ""
         end_value = ""
@@ -1823,15 +2747,68 @@ def _field_control(field_name: str, current_value: Any, intent_type: str, intent
             end_value = _coerce_date_input_value(current_value.get("end_date") or current_value.get("checkout") or current_value.get("date_to"))
         return {
             "kind": "date_range",
-            "min": date.today().isoformat(),
+            "min": field_definition.get("min_date") or date.today().isoformat(),
+            "max": field_definition.get("max_date") or "",
+            "start_value": start_value,
+            "end_value": end_value,
+        }
+    if field_value_type == "date_range":
+        start_value = ""
+        end_value = ""
+        if isinstance(current_value, dict):
+            start_value = _coerce_date_input_value(current_value.get("start_date") or current_value.get("checkin") or current_value.get("date_from"))
+            end_value = _coerce_date_input_value(current_value.get("end_date") or current_value.get("checkout") or current_value.get("date_to"))
+        return {
+            "kind": "date_range",
+            "min": field_definition.get("min_date") or date.today().isoformat(),
+            "max": field_definition.get("max_date") or "",
             "start_value": start_value,
             "end_value": end_value,
         }
     if is_date_field(field_name):
         return {
             "kind": "date",
-            "min": date.today().isoformat(),
+            "min": _resolve_date_control_min(field_name, field_value_type, field_definition.get("min_date")),
+            "max": field_definition.get("max_date") or "",
+            "after_field": _extract_after_field(field_definition.get("min_date")),
             "value": _coerce_date_input_value(current_value),
+        }
+    if field_value_type in {"date", "checkin_date", "checkout_date"}:
+        return {
+            "kind": "date",
+            "min": _resolve_date_control_min(field_name, field_value_type, field_definition.get("min_date")),
+            "max": field_definition.get("max_date") or "",
+            "after_field": _extract_after_field(field_definition.get("min_date")),
+            "value": _coerce_date_input_value(current_value),
+        }
+    if field_value_type == "time":
+        return {
+            "kind": "time",
+            "value": str(current_value or "").strip(),
+            "min": field_definition.get("min_time") or "",
+            "max": field_definition.get("max_time") or "",
+        }
+    if field_value_type == "datetime":
+        return {
+            "kind": "datetime",
+            "value": str(current_value or "").strip(),
+            "min": field_definition.get("min_datetime") or "",
+            "max": field_definition.get("max_datetime") or "",
+        }
+    if field_value_type == "enum" and field_choices:
+        return {
+            "kind": "select",
+            "value": _normalize_select_value(current_value),
+            "options": field_choices,
+        }
+    if field_value_type == "boolean":
+        return {
+            "kind": "select",
+            "value": _normalize_select_value(current_value),
+            "options": [
+                {"value": "si", "label": "Sí"},
+                {"value": "no", "label": "No"},
+            ],
         }
     options = _select_options_for_field(field_name, intent_type, intent_domain)
     if options:
@@ -1840,7 +2817,33 @@ def _field_control(field_name: str, current_value: Any, intent_type: str, intent
             "value": _normalize_select_value(current_value),
             "options": options,
         }
-    return {"kind": "textarea"}
+    if field_value_type == "integer":
+        return {"kind": "integer", "value": current_value, "min": min_value, "max": max_value}
+    if field_value_type in {"float", "money_eur", "money_eur_range"}:
+        return {"kind": "number", "value": current_value, "step": "0.01", "min": min_value, "max": max_value}
+    return {
+        "kind": "textarea",
+        "min_length": field_definition.get("min_length") or "",
+        "max_length": field_definition.get("max_length") or "",
+    }
+
+
+def _resolve_date_control_min(field_name: str, field_value_type: str, raw_min: str) -> str:
+    min_value = str(raw_min or "").strip()
+    if min_value == "today":
+        return date.today().isoformat()
+    if min_value.startswith("after:"):
+        return date.today().isoformat()
+    if field_value_type in {"date", "checkin_date", "checkout_date"} or is_date_field(field_name):
+        return min_value or date.today().isoformat()
+    return min_value
+
+
+def _extract_after_field(raw_min: Any) -> str:
+    text = str(raw_min or "").strip()
+    if not text.startswith("after:"):
+        return ""
+    return text.split(":", 1)[1].strip()
 
 
 def _select_options_for_field(field_name: str, intent_type: str, intent_domain: str) -> list[dict[str, str]]:
@@ -1905,6 +2908,26 @@ def _normalize_select_value(value: Any) -> str:
     return replacements.get(raw, raw)
 
 
+def _safe_int(value: Any) -> Optional[int]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def _safe_float(value: Any) -> Optional[float]:
+    raw = str(value or "").strip().replace(",", ".")
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
 def _field_has_value(field_name: str, state: SessionState, response: LLMResponse) -> bool:
     candidates = [state.known_fields.get(field_name), response.known_fields.get(field_name)]
     if field_name in {"dates"}:
@@ -1950,7 +2973,12 @@ def _collect_answered_fields(state: SessionState, field_entries: list[dict[str, 
     answered: list[dict[str, Any]] = []
     for entry in field_entries:
         field_name = entry.get("field_name", "")
-        value = state.known_fields.get(field_name)
+        if field_name == "budget_range":
+            min_value = state.known_fields.get("budget_min")
+            max_value = state.known_fields.get("budget_max")
+            value = {"min": min_value, "max": max_value} if _has_content(min_value) or _has_content(max_value) else None
+        else:
+            value = state.known_fields.get(field_name)
         if entry.get("control", {}).get("kind") == "zone_selector":
             value = state.known_fields.get("location_json") or value
         if value in (None, ""):
@@ -1972,6 +3000,12 @@ def _extract_field_answer(form, field_name: str, control: dict[str, Any]) -> Any
     if kind == "zone_selector":
         payload = _parse_zone_json(str(form.get(f"field__{field_name}__zone_json", "")))
         return payload
+    if kind == "budget_range":
+        min_value = str(form.get(f"field__{field_name}__min", "")).strip()
+        max_value = str(form.get(f"field__{field_name}__max", "")).strip()
+        if min_value or max_value:
+            return {"min": min_value, "max": max_value}
+        return None
     if kind == "date_range":
         start = str(form.get(f"field__{field_name}__start", "")).strip()
         end = str(form.get(f"field__{field_name}__end", "")).strip()
@@ -1981,7 +3015,13 @@ def _extract_field_answer(form, field_name: str, control: dict[str, Any]) -> Any
     return str(form.get(f"field__{field_name}", "")).strip()
 
 
-def _validate_control_answer(answer: Any, control: dict[str, Any], field_name: str) -> Optional[str]:
+def _validate_control_answer(
+    answer: Any,
+    control: dict[str, Any],
+    field_name: str,
+    known_fields: Optional[dict[str, Any]] = None,
+    submitted_answers: Optional[dict[str, Any]] = None,
+) -> Optional[str]:
     kind = control.get("kind")
     if kind == "zone_selector":
         if not answer:
@@ -1999,6 +3039,48 @@ def _validate_control_answer(answer: Any, control: dict[str, Any], field_name: s
         allowed = {option["value"] for option in control.get("options", [])}
         if str(answer) not in allowed:
             return "Selecciona una opción válida."
+    if kind == "integer" and answer:
+        try:
+            parsed = int(str(answer))
+            if parsed <= 0:
+                return "Introduce un número entero mayor que 0."
+            min_value = _safe_int(control.get("min"))
+            max_value = _safe_int(control.get("max"))
+            if min_value is not None and parsed < min_value:
+                return f"Introduce un número entero mayor o igual que {min_value}."
+            if max_value is not None and parsed > max_value:
+                return f"Introduce un número entero menor o igual que {max_value}."
+        except ValueError:
+            return "Introduce un número entero válido."
+    if kind == "number" and answer:
+        try:
+            parsed = float(str(answer).replace(",", "."))
+            if parsed <= 0:
+                return "Introduce un número mayor que 0."
+            min_value = _safe_float(control.get("min"))
+            max_value = _safe_float(control.get("max"))
+            if min_value is not None and parsed < min_value:
+                return f"Introduce un número mayor o igual que {min_value:g}."
+            if max_value is not None and parsed > max_value:
+                return f"Introduce un número menor o igual que {max_value:g}."
+        except ValueError:
+            return "Introduce un número válido."
+    if kind == "budget_range" and answer:
+        if not isinstance(answer, dict):
+            return "Introduce un rango válido en euros."
+        min_raw = str(answer.get("min") or "").strip()
+        max_raw = str(answer.get("max") or "").strip()
+        if not min_raw or not max_raw:
+            return "Introduce precio mínimo y precio máximo en euros."
+        try:
+            min_parsed = float(min_raw.replace(",", "."))
+            max_parsed = float(max_raw.replace(",", "."))
+        except ValueError:
+            return "Introduce importes válidos en euros."
+        if min_parsed <= 0 or max_parsed <= 0:
+            return "Introduce importes mayores que 0."
+        if max_parsed < min_parsed:
+            return "El precio máximo debe ser mayor o igual que el mínimo."
     if kind == "date_range":
         if not answer:
             return None
@@ -2013,23 +3095,92 @@ def _validate_control_answer(answer: Any, control: dict[str, Any], field_name: s
             end_date = date.fromisoformat(end)
         except ValueError:
             return "Selecciona un rango de fechas válido."
+        min_value = control.get("min") or ""
+        max_value = control.get("max") or ""
+        if min_value and (start_date < date.fromisoformat(min_value) or end_date < date.fromisoformat(min_value)):
+            return "Selecciona un rango igual o posterior al mínimo permitido."
+        if max_value and (start_date > date.fromisoformat(max_value) or end_date > date.fromisoformat(max_value)):
+            return "Selecciona un rango igual o anterior al máximo permitido."
         if end_date < start_date:
             return "La fecha final debe ser igual o posterior a la fecha inicial."
     if kind == "date" and answer:
         try:
-            date.fromisoformat(str(answer))
+            parsed = date.fromisoformat(str(answer))
+            min_value = control.get("min") or ""
+            max_value = control.get("max") or ""
+            if min_value and parsed < date.fromisoformat(min_value):
+                return f"Selecciona una fecha igual o posterior a {datetime.strptime(min_value, '%Y-%m-%d').strftime('%d/%m/%Y')}."
+            if max_value and parsed > date.fromisoformat(max_value):
+                return f"Selecciona una fecha igual o anterior a {datetime.strptime(max_value, '%Y-%m-%d').strftime('%d/%m/%Y')}."
+            compare_field = str(control.get("after_field") or "").strip()
+            if compare_field:
+                compare_raw = ""
+                if submitted_answers:
+                    compare_raw = str(submitted_answers.get(compare_field) or "").strip()
+                if not compare_raw and known_fields:
+                    compare_raw = str(known_fields.get(compare_field) or "").strip()
+                compare_date = _coerce_date_input_value(compare_raw)
+                if compare_date:
+                    reference_date = date.fromisoformat(compare_date)
+                    if parsed <= reference_date:
+                        return "Esta fecha debe ser posterior a la fecha de entrada."
         except ValueError:
             return "Selecciona una fecha válida."
+    if kind == "time" and answer:
+        raw = str(answer).strip()
+        if len(raw) != 5 or raw[2] != ":":
+            return "Selecciona una hora válida."
+        min_value = control.get("min") or ""
+        max_value = control.get("max") or ""
+        if min_value and raw < min_value:
+            return f"Selecciona una hora igual o posterior a {min_value}."
+        if max_value and raw > max_value:
+            return f"Selecciona una hora igual o anterior a {max_value}."
+    if kind == "datetime" and answer:
+        raw = str(answer).strip()
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except ValueError:
+            return "Selecciona una fecha y hora válidas."
+        min_value = control.get("min") or ""
+        max_value = control.get("max") or ""
+        if min_value:
+            if parsed < datetime.fromisoformat(min_value):
+                return "Selecciona una fecha y hora posterior al mínimo permitido."
+        if max_value:
+            if parsed > datetime.fromisoformat(max_value):
+                return "Selecciona una fecha y hora anterior al máximo permitido."
+    if kind == "textarea" and answer:
+        raw = str(answer).strip()
+        min_length = _safe_int(control.get("min_length"))
+        max_length = _safe_int(control.get("max_length"))
+        if min_length is not None and len(raw) < min_length:
+            return f"Escribe al menos {min_length} caracteres."
+        if max_length is not None and len(raw) > max_length:
+            return f"Escribe como máximo {max_length} caracteres."
     return None
 
 
 def _format_answer_for_review(value: Any, control: dict[str, Any]) -> str:
     kind = control.get("kind")
+    if kind == "budget_range" and isinstance(value, dict):
+        min_value = str(value.get("min") or "").strip()
+        max_value = str(value.get("max") or "").strip()
+        if min_value and max_value:
+            return f"Entre {min_value} € y {max_value} €"
     if kind == "zone_selector" and isinstance(value, dict):
         return zone_display_value(value)
     if kind == "date" and value:
         formatted = _format_review_date(value)
         return formatted or str(value)
+    if kind == "time" and value:
+        return str(value)
+    if kind == "datetime" and value:
+        raw = str(value).strip()
+        try:
+            return datetime.fromisoformat(raw).strftime("%d/%m/%Y %H:%M")
+        except ValueError:
+            return raw
     if kind == "date_range" and isinstance(value, dict):
         start = value.get("start_date") or ""
         end = value.get("end_date") or ""
@@ -2215,6 +3366,8 @@ def _home_pagination(
     intent_type: str,
     zone_filter: Optional[dict[str, Any]],
     saved_filter_id: int | None,
+    intent_domains: Optional[list[str]] = None,
+    intent_types: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     def page_url(target_page: int) -> str:
         params: dict[str, Any] = {"page": target_page}
@@ -2224,6 +3377,10 @@ def _home_pagination(
             params["location"] = location
         if intent_type:
             params["intent_type"] = intent_type
+        if intent_domains:
+            params["intent_domains_json"] = json.dumps(_normalize_string_list(intent_domains), ensure_ascii=False)
+        if intent_types:
+            params["intent_types_json"] = json.dumps(_normalize_string_list(intent_types), ensure_ascii=False)
         if zone_filter:
             params["location_zone_json"] = json.dumps(_compact_zone_for_query(zone_filter), ensure_ascii=False)
         if saved_filter_id:

@@ -25,7 +25,7 @@ prompt de usuario.
 ## REGLAS OBLIGATORIAS
 
 1. Elige `intent_domain` y `intent_type` SOLO entre los definidos en el contrato maestro.
-2. Si no hay encaje claro, usa la `fallback_policy` del contrato.
+2. Si no hay encaje claro, usa el intent type de fallback interno `unclassified_candidate`.
 3. Extrae lo ya conocido sin inventar datos.
 4. Usa el schema operativo del `intent_type` para:
    - completar `known_fields`
@@ -119,10 +119,6 @@ def build_user_prompt(state: SessionState, registry: MasterSchemaRegistry) -> st
     parts.append(
         "COMMON CORE DEL CONTRATO:\n"
         f"{registry.common_core_prompt()}"
-    )
-    parts.append(
-        "FALLBACK POLICY DEL CONTRATO:\n"
-        f"{registry.fallback_policy}"
     )
     parts.append(
         "CATÁLOGO DE INTENT TYPES DISPONIBLES:\n"

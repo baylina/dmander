@@ -44,32 +44,35 @@
       </form>
 
     {% elif wizard_step == "questions" %}
+      {% if debug_normalization and active_wizard.intent_domain and active_wizard.intent_type %}
+        <section class="debug-inferred-panel">
+          <span class="detail-label">Esquema inferido</span>
+          <div class="debug-inferred-path">
+            {{ active_wizard.schema_domain_display_name }} &gt; {{ active_wizard.schema_display_name }}
+          </div>
+          <div class="debug-inferred-list">
+            {% for item in active_wizard.schema_debug_outline %}
+              <div class="debug-inferred-item">
+                <span class="debug-inferred-marker">{{ item.marker or " " }}</span>
+                <span class="debug-inferred-name">{{ item.name }}</span>
+              </div>
+            {% endfor %}
+          </div>
+        </section>
+      {% endif %}
+
       <div class="wizard-panel">
         <div class="wizard-block">
           <span class="detail-label">Texto inicial de la demanda</span>
           <p class="lead compact">{{ active_wizard.state.original_text }}</p>
         </div>
-        {% if debug_normalization and active_wizard.intent_domain and active_wizard.intent_type %}
-          <div class="wizard-block">
-            <span class="detail-label">Depuración de normalización</span>
-            <div class="chip-wrap">
-              <span class="pill">intent_domain: {{ active_wizard.intent_domain }}</span>
-              <span class="pill">intent_type: {{ active_wizard.intent_type }}</span>
-              <span class="pill">display_name: {{ active_wizard.schema_display_name }}</span>
-            </div>
-            <div class="chip-wrap">
-              {% for field in active_wizard.schema_required_fields %}
-                <span class="pill soft">required_field: {{ field }}</span>
-              {% endfor %}
-            </div>
-          </div>
-        {% endif %}
       </div>
 
       <form action="/demands/review" method="post" class="form-stack js-busy-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
         {% set required_fields = active_wizard.field_entries | selectattr("category", "equalto", "required") | list %}
+        {% set optional_fields = active_wizard.field_entries | selectattr("category", "equalto", "optional") | list %}
 
         {% if required_fields %}
           <section class="questionnaire-group">
@@ -86,7 +89,16 @@
             {% endif %}
             <div class="questionnaire-grid">
               {% for entry in required_fields %}
-                <label class="question-card {{ 'question-card-error' if entry.issue_message else '' }}">
+                <label
+                  class="question-card {{ 'question-card-error' if entry.issue_message else '' }}"
+                  data-conditional-entry="{{ '1' if entry.conditional_rule else '0' }}"
+                  {% if entry.conditional_rule %}
+                    data-conditional-field="{{ entry.conditional_rule['field'] }}"
+                    data-conditional-operator="{{ entry.conditional_rule['operator'] }}"
+                    data-conditional-values='{{ entry.conditional_rule["values"] | tojson }}'
+                  {% endif %}
+                  {% if not entry.client_visible %}hidden{% endif %}
+                >
                   <span class="question-card-head">
                     <strong>{{ entry.question }}<span class="required-mark">*</span></strong>
                   </span>
@@ -94,23 +106,45 @@
                     <span class="question-error-banner">{{ entry.issue_message }}</span>
                   {% endif %}
                   {% if entry.control.kind == "select" %}
-                    <select name="field__{{ entry.field_name }}" required aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
+                    <select name="field__{{ entry.field_name }}" {% if entry.client_visible %}required{% endif %} data-required-when-active="1" aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
                       <option value="">Selecciona una opción</option>
                       {% for option in entry.control.options %}
                         <option value="{{ option.value }}" {{ 'selected' if entry.control.value == option.value else '' }}>{{ option.label }}</option>
                       {% endfor %}
                     </select>
+                  {% elif entry.control.kind == "integer" %}
+                    <input type="number" name="field__{{ entry.field_name }}" value="{{ entry.control.value }}" min="{{ entry.control.min or '1' }}" {% if entry.control.max %}max="{{ entry.control.max }}"{% endif %} step="1" {% if entry.client_visible %}required{% endif %} data-required-when-active="1" aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
+                  {% elif entry.control.kind == "number" %}
+                    <input type="number" name="field__{{ entry.field_name }}" value="{{ entry.control.value }}" min="{{ entry.control.min or '0.01' }}" {% if entry.control.max %}max="{{ entry.control.max }}"{% endif %} step="{{ entry.control.step or '0.01' }}" {% if entry.client_visible %}required{% endif %} data-required-when-active="1" aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
+                  {% elif entry.control.kind == "budget_range" %}
+                    <div class="date-range-grid">
+                      <div class="date-range-field">
+                        <span class="mini-label">Mínimo (€)</span>
+                        <input type="number" name="field__{{ entry.field_name }}__min" value="{{ entry.control.min_value }}" min="{{ entry.control.min or '0.01' }}" {% if entry.control.max %}max="{{ entry.control.max }}"{% endif %} step="0.01" {% if entry.client_visible %}required{% endif %} data-required-when-active="1" aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
+                      </div>
+                      <div class="date-range-field">
+                        <span class="mini-label">Máximo (€)</span>
+                        <input type="number" name="field__{{ entry.field_name }}__max" value="{{ entry.control.max_value }}" min="{{ entry.control.min or '0.01' }}" {% if entry.control.max %}max="{{ entry.control.max }}"{% endif %} step="0.01" {% if entry.client_visible %}required{% endif %} data-required-when-active="1" aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
+                      </div>
+                    </div>
                   {% elif entry.control.kind == "date" %}
-                    <input type="date" name="field__{{ entry.field_name }}" value="{{ entry.control.value }}" min="{{ entry.control.min }}" required aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
+                    <input type="date" name="field__{{ entry.field_name }}" value="{{ entry.control.value }}" min="{{ entry.control.min }}" {% if entry.control.max %}max="{{ entry.control.max }}"{% endif %} {% if entry.control.after_field %}data-after-field="{{ entry.control.after_field }}" data-base-min="{{ entry.control.min }}" data-after-message="Primero selecciona una fecha válida para {{ entry.control.after_field }}."{% endif %} {% if entry.client_visible %}required{% endif %} data-required-when-active="1" aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
+                    {% if entry.control.after_field %}
+                      <span class="small-note" data-after-field-note="{{ entry.field_name }}" hidden></span>
+                    {% endif %}
+                  {% elif entry.control.kind == "time" %}
+                    <input type="time" name="field__{{ entry.field_name }}" value="{{ entry.control.value }}" {% if entry.control.min %}min="{{ entry.control.min }}"{% endif %} {% if entry.control.max %}max="{{ entry.control.max }}"{% endif %} {% if entry.client_visible %}required{% endif %} data-required-when-active="1" aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
+                  {% elif entry.control.kind == "datetime" %}
+                    <input type="datetime-local" name="field__{{ entry.field_name }}" value="{{ entry.control.value }}" {% if entry.control.min %}min="{{ entry.control.min }}"{% endif %} {% if entry.control.max %}max="{{ entry.control.max }}"{% endif %} {% if entry.client_visible %}required{% endif %} data-required-when-active="1" aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
                   {% elif entry.control.kind == "date_range" %}
                     <div class="date-range-grid">
                       <div class="date-range-field">
                         <span class="mini-label">Desde</span>
-                        <input type="date" name="field__{{ entry.field_name }}__start" value="{{ entry.control.start_value }}" min="{{ entry.control.min }}" required aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
+                        <input type="date" name="field__{{ entry.field_name }}__start" value="{{ entry.control.start_value }}" min="{{ entry.control.min }}" {% if entry.control.max %}max="{{ entry.control.max }}"{% endif %} {% if entry.client_visible %}required{% endif %} data-required-when-active="1" aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
                       </div>
                       <div class="date-range-field">
                         <span class="mini-label">Hasta</span>
-                        <input type="date" name="field__{{ entry.field_name }}__end" value="{{ entry.control.end_value }}" min="{{ entry.control.min }}" required aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
+                        <input type="date" name="field__{{ entry.field_name }}__end" value="{{ entry.control.end_value }}" min="{{ entry.control.min }}" {% if entry.control.max %}max="{{ entry.control.max }}"{% endif %} {% if entry.client_visible %}required{% endif %} data-required-when-active="1" aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
                       </div>
                     </div>
                   {% elif entry.control.kind == "zone_selector" %}
@@ -124,7 +158,7 @@
                     {% set radius_options = entry.control.radius_options %}
                     {% include "_zone_selector.html" %}
                   {% else %}
-                    <textarea name="field__{{ entry.field_name }}" rows="3" placeholder="{{ entry.placeholder }}" required aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">{{ entry.current_value }}</textarea>
+                    <textarea name="field__{{ entry.field_name }}" rows="3" placeholder="{{ entry.placeholder }}" {% if entry.control.max_length %}maxlength="{{ entry.control.max_length }}"{% endif %} {% if entry.client_visible %}required{% endif %} data-required-when-active="1" aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">{{ entry.current_value }}</textarea>
                   {% endif %}
                   {% if entry.issue_message %}
                     <span class="small-note">Corrige este valor y vuelve a continuar.</span>
@@ -135,6 +169,80 @@
           </section>
         {% else %}
           <section class="questionnaire-group"></section>
+        {% endif %}
+
+        {% if optional_fields %}
+          <details class="demand-disclosure questionnaire-group">
+            <summary class="questionnaire-optional-toggle">Rellenar más detalles opcionales de la demanda</summary>
+            <div class="wizard-block">
+              <span class="detail-label">Datos opcionales</span>
+              <p class="muted compact">Estas respuestas no son obligatorias, pero pueden ayudar a recibir propuestas más afinadas.</p>
+            </div>
+            <div class="questionnaire-grid">
+              {% for entry in optional_fields %}
+                <label class="question-card {{ 'question-card-error' if entry.issue_message else '' }}">
+                  <span class="question-card-head">
+                    <strong>{{ entry.question }}</strong>
+                  </span>
+                  {% if entry.control.kind == "select" %}
+                    <select name="field__{{ entry.field_name }}" aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
+                      <option value="">Opcional</option>
+                      {% for option in entry.control.options %}
+                        <option value="{{ option.value }}" {{ 'selected' if entry.control.value == option.value else '' }}>{{ option.label }}</option>
+                      {% endfor %}
+                    </select>
+                  {% elif entry.control.kind == "integer" %}
+                    <input type="number" name="field__{{ entry.field_name }}" value="{{ entry.control.value }}" min="{{ entry.control.min or '1' }}" {% if entry.control.max %}max="{{ entry.control.max }}"{% endif %} step="1" aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
+                  {% elif entry.control.kind == "number" %}
+                    <input type="number" name="field__{{ entry.field_name }}" value="{{ entry.control.value }}" min="{{ entry.control.min or '0.01' }}" {% if entry.control.max %}max="{{ entry.control.max }}"{% endif %} step="{{ entry.control.step or '0.01' }}" aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
+                  {% elif entry.control.kind == "budget_range" %}
+                    <div class="date-range-grid">
+                      <div class="date-range-field">
+                        <span class="mini-label">Mínimo (€)</span>
+                        <input type="number" name="field__{{ entry.field_name }}__min" value="{{ entry.control.min_value }}" min="{{ entry.control.min or '0.01' }}" {% if entry.control.max %}max="{{ entry.control.max }}"{% endif %} step="0.01" aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
+                      </div>
+                      <div class="date-range-field">
+                        <span class="mini-label">Máximo (€)</span>
+                        <input type="number" name="field__{{ entry.field_name }}__max" value="{{ entry.control.max_value }}" min="{{ entry.control.min or '0.01' }}" {% if entry.control.max %}max="{{ entry.control.max }}"{% endif %} step="0.01" aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
+                      </div>
+                    </div>
+                  {% elif entry.control.kind == "date" %}
+                    <input type="date" name="field__{{ entry.field_name }}" value="{{ entry.control.value }}" min="{{ entry.control.min }}" {% if entry.control.max %}max="{{ entry.control.max }}"{% endif %} {% if entry.control.after_field %}data-after-field="{{ entry.control.after_field }}" data-base-min="{{ entry.control.min }}" data-after-message="Primero selecciona una fecha válida para {{ entry.control.after_field }}."{% endif %} aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
+                    {% if entry.control.after_field %}
+                      <span class="small-note" data-after-field-note="{{ entry.field_name }}" hidden></span>
+                    {% endif %}
+                  {% elif entry.control.kind == "time" %}
+                    <input type="time" name="field__{{ entry.field_name }}" value="{{ entry.control.value }}" {% if entry.control.min %}min="{{ entry.control.min }}"{% endif %} {% if entry.control.max %}max="{{ entry.control.max }}"{% endif %} aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
+                  {% elif entry.control.kind == "datetime" %}
+                    <input type="datetime-local" name="field__{{ entry.field_name }}" value="{{ entry.control.value }}" {% if entry.control.min %}min="{{ entry.control.min }}"{% endif %} {% if entry.control.max %}max="{{ entry.control.max }}"{% endif %} aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
+                  {% elif entry.control.kind == "date_range" %}
+                    <div class="date-range-grid">
+                      <div class="date-range-field">
+                        <span class="mini-label">Desde</span>
+                        <input type="date" name="field__{{ entry.field_name }}__start" value="{{ entry.control.start_value }}" min="{{ entry.control.min }}" {% if entry.control.max %}max="{{ entry.control.max }}"{% endif %} aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
+                      </div>
+                      <div class="date-range-field">
+                        <span class="mini-label">Hasta</span>
+                        <input type="date" name="field__{{ entry.field_name }}__end" value="{{ entry.control.end_value }}" min="{{ entry.control.min }}" {% if entry.control.max %}max="{{ entry.control.max }}"{% endif %} aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">
+                      </div>
+                    </div>
+                  {% elif entry.control.kind == "zone_selector" %}
+                    {% set input_name = "field__" ~ entry.field_name %}
+                    {% set hidden_json_name = input_name ~ "__zone_json" %}
+                    {% set hidden_label_name = input_name %}
+                    {% set zone_value = entry.control.value %}
+                    {% set map_id = "zone-map-optional-" ~ loop.index ~ "-" ~ entry.field_name %}
+                    {% set zone_placeholder = entry.placeholder %}
+                    {% set zone_country_bias = "es" %}
+                    {% set radius_options = entry.control.radius_options %}
+                    {% include "_zone_selector.html" %}
+                  {% else %}
+                    <textarea name="field__{{ entry.field_name }}" rows="3" placeholder="{{ entry.placeholder }}" {% if entry.control.max_length %}maxlength="{{ entry.control.max_length }}"{% endif %} aria-invalid="{{ 'true' if entry.issue_message else 'false' }}">{{ entry.current_value }}</textarea>
+                  {% endif %}
+                </label>
+              {% endfor %}
+            </div>
+          </details>
         {% endif %}
 
         <div class="wizard-actions">
@@ -186,6 +294,113 @@
         label.textContent = button.dataset.busyText;
       }
     });
+  });
+
+  function nextDayIso(isoDate) {
+    const parts = String(isoDate || '').split('-');
+    if (parts.length !== 3) return '';
+    const year = Number(parts[0]);
+    const month = Number(parts[1]) - 1;
+    const day = Number(parts[2]);
+    const value = new Date(Date.UTC(year, month, day));
+    if (Number.isNaN(value.getTime())) return '';
+    value.setUTCDate(value.getUTCDate() + 1);
+    return value.toISOString().slice(0, 10);
+  }
+
+  function syncDependentCheckoutDates(form) {
+    form.querySelectorAll('input[type="date"][data-after-field]').forEach((checkoutInput) => {
+      const referenceField = checkoutInput.dataset.afterField;
+      const message = checkoutInput.dataset.afterMessage || 'Primero selecciona la fecha de entrada.';
+      const note = form.querySelector(`[data-after-field-note="${checkoutInput.name.replace('field__', '')}"]`);
+      const referenceInput = form.querySelector(`input[name="field__${referenceField}"]`);
+      const referenceValue = referenceInput ? String(referenceInput.value || '').trim() : '';
+      const nextAllowed = referenceValue ? nextDayIso(referenceValue) : '';
+      const fallbackMin = checkoutInput.dataset.baseMin || '';
+
+      if (!nextAllowed) {
+        checkoutInput.disabled = true;
+        checkoutInput.value = '';
+        checkoutInput.min = fallbackMin;
+        if (note) {
+          note.hidden = false;
+          note.textContent = message;
+        }
+        return;
+      }
+
+      checkoutInput.disabled = false;
+      checkoutInput.min = nextAllowed;
+      if (checkoutInput.value && checkoutInput.value < nextAllowed) {
+        checkoutInput.value = '';
+      }
+      if (note) {
+        note.hidden = true;
+        note.textContent = '';
+      }
+    });
+  }
+
+  function normalizedConditionalValue(value) {
+    return String(value || '').trim().toLowerCase();
+  }
+
+  function currentFieldValue(form, fieldName) {
+    const direct = form.querySelector(`[name="field__${fieldName}"]`);
+    if (direct) {
+      if (direct instanceof HTMLSelectElement && direct.multiple) {
+        return Array.from(direct.selectedOptions).map((option) => option.value);
+      }
+      return direct.value;
+    }
+    const rangeMin = form.querySelector(`[name="field__${fieldName}__min"]`);
+    const rangeMax = form.querySelector(`[name="field__${fieldName}__max"]`);
+    if (rangeMin || rangeMax) {
+      return [rangeMin?.value || '', rangeMax?.value || ''].filter(Boolean);
+    }
+    const start = form.querySelector(`[name="field__${fieldName}__start"]`);
+    const end = form.querySelector(`[name="field__${fieldName}__end"]`);
+    if (start || end) {
+      return [start?.value || '', end?.value || ''].filter(Boolean);
+    }
+    return '';
+  }
+
+  function conditionalRuleMatches(form, card) {
+    const fieldName = card.dataset.conditionalField || '';
+    const operator = card.dataset.conditionalOperator || 'equals';
+    const expectedValues = JSON.parse(card.dataset.conditionalValues || '[]').map(normalizedConditionalValue).filter(Boolean);
+    if (!fieldName || !expectedValues.length) return false;
+    const current = currentFieldValue(form, fieldName);
+    const currentValues = (Array.isArray(current) ? current : [current]).map(normalizedConditionalValue).filter(Boolean);
+    if (!currentValues.length) return false;
+    if (operator === 'equals') return currentValues.some((value) => value === expectedValues[0]);
+    if (operator === 'not_equals') return currentValues.every((value) => value !== expectedValues[0]);
+    if (operator === 'in') return currentValues.some((value) => expectedValues.includes(value));
+    return false;
+  }
+
+  function syncConditionalRequiredFields(form) {
+    form.querySelectorAll('[data-conditional-entry="1"]').forEach((card) => {
+      const active = conditionalRuleMatches(form, card);
+      card.hidden = !active;
+      card.querySelectorAll('[data-required-when-active="1"]').forEach((input) => {
+        if (active) {
+          input.setAttribute('required', 'required');
+        } else {
+          input.removeAttribute('required');
+        }
+      });
+    });
+  }
+
+  document.querySelectorAll('.js-busy-form').forEach((form) => {
+    syncDependentCheckoutDates(form);
+    syncConditionalRequiredFields(form);
+    form.addEventListener('input', () => syncDependentCheckoutDates(form));
+    form.addEventListener('change', () => syncDependentCheckoutDates(form));
+    form.addEventListener('input', () => syncConditionalRequiredFields(form));
+    form.addEventListener('change', () => syncConditionalRequiredFields(form));
   });
 </script>
 {% endblock %}

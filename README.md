@@ -96,7 +96,6 @@ Si un proveedor no está configurado, simplemente no aparece como opción en la 
 - Pueden ser eliminadas por su creador mientras sigan abiertas
 - Muestran el número de ofertas recibidas
 - Guardan un `normalized_payload` JSON alineado con el contrato maestro
-- Si una demanda antigua no tiene ese payload, la app lo reconstruye al vuelo
 
 ### Ofertas
 
@@ -110,7 +109,7 @@ Cada demanda pasa por este flujo:
 
 `texto libre -> intent_domain / intent_type -> schema del contrato -> extracción de campos -> missing required / recommended -> pregunta adicional -> demanda normalizada final`
 
-La fuente de verdad para `intent_type`, `required_fields`, `optional_fields`, `location_policy`, `budget_policy` y `fallback_policy` es el JSON maestro configurado en `DMANDER_MASTER_SCHEMA_PATH`.
+La fuente de verdad para `intent_domain`, `intent_type`, `fields`, `location_policy` y `budget_policy` es el JSON maestro configurado en `DMANDER_MASTER_SCHEMA_PATH`.
 
 Encima de ese contrato hay una capa de reglas ajustable en:
 

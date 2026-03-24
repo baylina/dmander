@@ -119,6 +119,11 @@ FIELD_PROMPTS = {
         "placeholder": "Ej.: 300 €, 1200 €, 20000 €...",
         "examples": ["300 €", "1200 €", "20000 €"],
     },
+    "budget_min": {
+        "question": "¿Cuál es tu presupuesto mínimo en euros (€)?",
+        "placeholder": "Ej.: 50 €, 100 €, 300 €...",
+        "examples": ["50 €", "100 €", "300 €"],
+    },
     "budget_total": {
         "question": "¿Cuál es tu presupuesto total en euros (€)?",
         "placeholder": "Ej.: 600 €, 1500 €, 4000 €...",
@@ -158,6 +163,11 @@ FIELD_PROMPTS = {
         "question": "¿Cuántas habitaciones necesitas?",
         "placeholder": "Ej.: 1, 2, 3...",
         "examples": ["1", "2", "3"],
+    },
+    "stars": {
+        "question": "¿Cuántas estrellas debe tener el hotel?",
+        "placeholder": "Ej.: 3, 4, 5...",
+        "examples": ["3", "4", "5"],
     },
     "destination": {
         "question": "¿Qué destino tienes en mente?",
@@ -275,6 +285,11 @@ FIELD_LABELS = {
     "checkout": "fecha de salida",
     "people": "personas",
     "rooms": "habitaciones",
+    "stars": "estrellas",
+    "size": "talla",
+    "board_type": "régimen",
+    "style": "estilo",
+    "budget_min": "presupuesto mínimo",
     "destination": "destino",
     "destination_area": "zona del destino",
     "property_type": "tipo de inmueble",
@@ -364,8 +379,14 @@ def get_field_prompt(
     intent_type: str = "",
     intent_domain: str = "",
 ) -> dict[str, Any]:
-    prompt = FIELD_PROMPTS.get(field_name, _default_prompt_for_field(field_name))
-    return _contextualize_prompt(dict(prompt), field_name, raw_text, intent_type, intent_domain)
+    normalized_field_name = str(field_name or "").strip()
+    canonical_field_name = normalized_field_name.lower()
+    language = _detect_prompt_language(raw_text)
+    if language != "es":
+        prompt = _default_prompt_for_field(canonical_field_name, language=language)
+        return prompt
+    prompt = FIELD_PROMPTS.get(canonical_field_name, _default_prompt_for_field(canonical_field_name))
+    return _contextualize_prompt(dict(prompt), canonical_field_name, raw_text, intent_type, intent_domain)
 
 
 def maybe_force_future_date(parsed_iso: str, raw_text: str, raw_value: Any, intent_domain: str, intent_type: str) -> str:
@@ -499,12 +520,97 @@ def _normalize_key(value: str) -> str:
 
 
 def _humanize_field_name(field_name: str) -> str:
-    return FIELD_LABELS.get(field_name, field_name.replace("_", " ").strip())
+    normalized = str(field_name or "").strip()
+    return FIELD_LABELS.get(normalized, FIELD_LABELS.get(normalized.lower(), normalized.replace("_", " ").strip()))
 
 
-def _default_prompt_for_field(field_name: str) -> dict[str, Any]:
+def _detect_prompt_language(raw_text: str) -> str:
+    lowered = _normalize_key(raw_text or "")
+    if not lowered:
+        return "es"
+    padded = f" {lowered} "
+    english_hits = sum(
+        token in padded
+        for token in (" i need ", " i want ", " looking for ", " want to buy ", " for my ", " near me ", " lessons ", " private lessons ")
+    )
+    catalan_hits = sum(
+        token in padded
+        for token in (" vull ", " necessito ", " busco ", " classes ", " professor ", " professora ", " ciutat ", " zona ", " a prop ")
+    )
+    spanish_hits = sum(
+        token in padded
+        for token in (" quiero ", " necesito ", " busco ", " clases ", " profesor ", " profesora ", " ciudad ", " zona ", " cerca de ")
+    )
+    if english_hits > max(catalan_hits, spanish_hits):
+        return "en"
+    if catalan_hits > spanish_hits:
+        return "ca"
+    return "es"
+
+
+def _default_prompt_for_field(field_name: str, language: str = "es") -> dict[str, Any]:
     label = _humanize_field_name(field_name)
     lowered = field_name.lower()
+    if language == "en":
+        if lowered.startswith("budget_"):
+            return {
+                "question": f"What is your {label} in euros (€)?",
+                "placeholder": "Example: 300 €, 1200 €, 20000 €...",
+                "examples": ["300 €", "1200 €", "20000 €"],
+            }
+        if lowered in {"date", "dates"} or lowered.endswith("_date"):
+            return {
+                "question": f"What {label} do you need exactly?",
+                "placeholder": "Example: 12/08/2026",
+                "examples": ["12/08/2026"],
+            }
+        if "location" in lowered or lowered in {"city", "country", "destination", "origin"}:
+            return {
+                "question": f"What {label} should we use?",
+                "placeholder": "Example: Barcelona, Madrid, Valencia...",
+                "examples": ["Barcelona", "Madrid", "Valencia"],
+            }
+        if lowered in {"people", "rooms", "hours", "participants", "children_count"}:
+            return {
+                "question": f"How many {label} do you need?",
+                "placeholder": "Example: 2, 4, 6...",
+                "examples": ["2", "4", "6"],
+            }
+        return {
+            "question": f"Can you specify {label}?",
+            "placeholder": "Add the detail here",
+            "examples": [],
+        }
+    if language == "ca":
+        if lowered.startswith("budget_"):
+            return {
+                "question": f"Quin és el teu {label} en euros (€)?",
+                "placeholder": "Ex.: 300 €, 1200 €, 20000 €...",
+                "examples": ["300 €", "1200 €", "20000 €"],
+            }
+        if lowered in {"date", "dates"} or lowered.endswith("_date"):
+            return {
+                "question": f"Quina {label} necessites exactament?",
+                "placeholder": "Ex.: 12/08/2026",
+                "examples": ["12/08/2026"],
+            }
+        if "location" in lowered or lowered in {"city", "country", "destination", "origin"}:
+            return {
+                "question": f"Quina {label} hem d'utilitzar?",
+                "placeholder": "Ex.: Barcelona, Sabadell, Girona...",
+                "examples": ["Barcelona", "Sabadell", "Girona"],
+            }
+        if lowered in {"people", "rooms", "hours", "participants", "children_count"}:
+            return {
+                "question": f"Quantes {label} necessites?",
+                "placeholder": "Ex.: 2, 4, 6...",
+                "examples": ["2", "4", "6"],
+            }
+        return {
+            "question": f"Em pots concretar {label}?",
+            "placeholder": "Escriu aquí el detall",
+            "examples": [],
+        }
     if lowered.startswith("budget_"):
         return {
             "question": f"¿Cuál es tu {label} en euros (€)?",
@@ -574,6 +680,12 @@ def _contextualize_prompt(
         prompt["question"] = "¿Qué modalidad prefieres: clases presenciales, online o te da igual?"
         prompt["placeholder"] = "Ej.: presenciales, online, me da igual..."
         prompt["examples"] = ["presenciales", "online", "me da igual"]
+        return prompt
+
+    if field_name == "level" and intent_type == "music_training":
+        prompt["question"] = "¿Qué nivel musical tienes o buscas?"
+        prompt["placeholder"] = "Ej.: principiante, medio, avanzado..."
+        prompt["examples"] = ["principiante", "medio", "avanzado"]
         return prompt
 
     if field_name == "fault" and "patinete" in lowered:

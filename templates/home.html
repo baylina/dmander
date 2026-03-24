@@ -62,6 +62,58 @@
       </div>
     </div>
 
+    <div class="search-field-stack">
+      <label>Categorías</label>
+      <div class="category-filter" data-category-filter="true">
+        <input type="hidden" name="intent_domains_json" value='{{ search_filters.intent_domains_json }}' data-category-domains-input>
+        <input type="hidden" name="intent_types_json" value='{{ search_filters.intent_types_json }}' data-category-types-input>
+        <button type="button" class="category-filter-trigger" data-category-open>
+          <span data-category-summary>{{ search_filters.category_summary }}</span>
+        </button>
+        <button type="button" class="category-filter-clear" data-category-clear {% if not search_filters.intent_domains and not search_filters.intent_types %}hidden{% endif %} aria-label="Limpiar categorías">×</button>
+
+        <div class="category-modal" data-category-modal hidden>
+          <div class="category-modal-backdrop" data-category-close></div>
+          <div class="category-modal-panel">
+            <div class="category-modal-head">
+              <div>
+                <strong>Filtrar por categorías</strong>
+                <p class="small-note">Primero elige uno o varios dominios y, si quieres afinar, selecciona tipos concretos dentro de ellos.</p>
+              </div>
+              <button type="button" class="category-modal-close" data-category-close>Cerrar</button>
+            </div>
+
+            <div class="category-modal-body">
+              <div class="category-picker">
+                <div class="category-picker-column">
+                  <div class="category-picker-label">Dominios</div>
+                  <select class="category-picker-select" data-category-domain-list multiple size="12">
+                    {% for domain in category_catalog %}
+                      <option value="{{ domain.code }}">{{ domain.name }}</option>
+                    {% endfor %}
+                  </select>
+                  <p class="small-note">Selecciona uno o varios dominios. Usa `Cmd` para marcar varios en macOS.</p>
+                </div>
+                <div class="category-picker-column">
+                  <div class="category-picker-label">Tipos concretos</div>
+                  <select class="category-picker-select" data-category-type-list multiple size="14"></select>
+                  <p class="small-note">Opcional. Si eliges tipos, el filtro será más preciso.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="category-modal-foot">
+              <div class="category-modal-actions">
+                <button type="button" class="button button-ghost" data-category-reset>Limpiar</button>
+                <button type="button" class="button button-ghost" data-category-close>Cancelar</button>
+                <button type="button" class="button button-primary" data-category-apply>Aplicar categorías</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="search-submit-stack">
       <button type="submit" class="button button-primary">Buscar</button>
     </div>
@@ -129,6 +181,8 @@
             <input type="hidden" name="location" value="{{ search_filters.location }}">
             <input type="hidden" name="location_zone_json" value='{{ search_filters.location_zone_json }}'>
             <input type="hidden" name="intent_type" value="{{ search_filters.intent_type }}">
+            <input type="hidden" name="intent_domains_json" value='{{ search_filters.intent_domains_json }}'>
+            <input type="hidden" name="intent_types_json" value='{{ search_filters.intent_types_json }}'>
             <label class="search-field-stack">
               <span>Nombre del filtro</span>
               <input type="text" name="name" placeholder="Nombre del filtro" value="{{ current_saved_filter.name if current_saved_filter else '' }}" required>
@@ -257,6 +311,7 @@
 
 <script>
   const keywordSuggestions = {{ keyword_suggestions | tojson }};
+  const categoryCatalog = {{ category_catalog | tojson }};
   const updateRemainingTimes = () => {
     document.querySelectorAll('.remaining-time').forEach((element) => {
       const raw = element.dataset.expiresAt;
@@ -415,6 +470,198 @@
           }
           input.value = JSON.stringify(compact);
         } catch (_) {
+        }
+      });
+    });
+
+    document.querySelectorAll('[data-category-filter="true"]').forEach((root) => {
+      const modal = root.querySelector('[data-category-modal]');
+      const openButtons = root.querySelectorAll('[data-category-open]');
+      const closeButtons = root.querySelectorAll('[data-category-close]');
+      const applyButton = root.querySelector('[data-category-apply]');
+      const resetButton = root.querySelector('[data-category-reset]');
+      const clearButton = root.querySelector('[data-category-clear]');
+      const summary = root.querySelector('[data-category-summary]');
+      const domainsInput = root.querySelector('[data-category-domains-input]');
+      const typesInput = root.querySelector('[data-category-types-input]');
+      const domainSelect = root.querySelector('[data-category-domain-list]');
+      const typeSelect = root.querySelector('[data-category-type-list]');
+      if (!modal || !domainsInput || !typesInput || !summary || !domainSelect || !typeSelect) return;
+
+      let appliedDomains = [];
+      let appliedTypes = [];
+      let workingDomains = [];
+      let workingTypes = [];
+
+      const parseList = (raw) => {
+        try {
+          const value = JSON.parse(raw || '[]');
+          return Array.isArray(value) ? value.filter((item) => typeof item === 'string' && item.trim()) : [];
+        } catch (_) {
+          return [];
+        }
+      };
+
+      const uniq = (items) => [...new Set(items.filter(Boolean))];
+      const domainName = (code) => categoryCatalog.find((item) => item.code === code)?.name || code;
+      const typeMeta = (intentType) => {
+        for (const domain of categoryCatalog) {
+          const match = (domain.intent_types || []).find((item) => item.intent_type === intentType);
+          if (match) return { ...match, domain_code: domain.code, domain_name: domain.name };
+        }
+        return null;
+      };
+      const summaryText = (domains, types) => {
+        if (!domains.length && !types.length) return 'Todas';
+        if (types.length) {
+          const firstType = typeMeta(types[0]);
+          if (types.length === 1 && firstType) {
+            return `${firstType.domain_name} / ${firstType.display_name}`;
+          }
+          if (domains.length === 1) {
+            return `${domainName(domains[0])} + ${types.length - 1}`;
+          }
+          return `${types.length} tipos`;
+        }
+        if (domains.length === 1) return `${domainName(domains[0])}`;
+        return `${domains.length} dominios`;
+      };
+
+      const selectedValues = (select) => [...select.selectedOptions].map((option) => option.value);
+
+      const renderTypeOptions = () => {
+        const selectedDomains = selectedValues(domainSelect);
+        const keepTypes = new Set(workingTypes);
+        const selectedDomainSet = new Set(selectedDomains);
+        const visibleTypes = categoryCatalog
+          .filter((domain) => !selectedDomains.length || selectedDomainSet.has(domain.code))
+          .flatMap((domain) => (domain.intent_types || []).map((item) => ({
+            value: item.intent_type,
+            label: `${domain.name} / ${item.display_name}`,
+          })));
+
+        typeSelect.innerHTML = '';
+        if (!visibleTypes.length) {
+          const placeholder = document.createElement('option');
+          placeholder.disabled = true;
+          placeholder.textContent = 'Primero selecciona uno o varios dominios';
+          typeSelect.appendChild(placeholder);
+          return;
+        }
+
+        visibleTypes.forEach((item) => {
+          const option = document.createElement('option');
+          option.value = item.value;
+          option.textContent = item.label;
+          option.selected = keepTypes.has(item.value);
+          typeSelect.appendChild(option);
+        });
+      };
+
+      const syncControls = () => {
+        [...domainSelect.options].forEach((option) => {
+          option.selected = workingDomains.includes(option.value);
+        });
+        renderTypeOptions();
+        [...typeSelect.options].forEach((option) => {
+          option.selected = workingTypes.includes(option.value);
+        });
+      };
+
+      const updateSummary = () => {
+        summary.textContent = summaryText(appliedDomains, appliedTypes);
+        if (clearButton) clearButton.hidden = !(appliedDomains.length || appliedTypes.length);
+      };
+
+      const persistApplied = () => {
+        domainsInput.value = JSON.stringify(appliedDomains);
+        typesInput.value = JSON.stringify(appliedTypes);
+        updateSummary();
+      };
+
+      const openModal = () => {
+        workingDomains = [...appliedDomains];
+        workingTypes = [...appliedTypes];
+        syncControls();
+        modal.hidden = false;
+        document.body.classList.add('has-category-modal');
+      };
+
+      const closeModal = (discard = true) => {
+        if (discard) {
+          workingDomains = [...appliedDomains];
+          workingTypes = [...appliedTypes];
+          syncControls();
+        }
+        modal.hidden = true;
+        document.body.classList.remove('has-category-modal');
+      };
+
+      appliedDomains = uniq(parseList(domainsInput.value));
+      appliedTypes = uniq(parseList(typesInput.value));
+      updateSummary();
+
+      domainSelect.addEventListener('change', () => {
+        workingDomains = uniq(selectedValues(domainSelect));
+        const visibleTypeValues = new Set(
+          categoryCatalog
+            .filter((domain) => workingDomains.includes(domain.code))
+            .flatMap((domain) => (domain.intent_types || []).map((item) => item.intent_type))
+        );
+        workingTypes = workingTypes.filter((intentType) => visibleTypeValues.has(intentType));
+        syncControls();
+      });
+
+      typeSelect.addEventListener('change', () => {
+        workingTypes = uniq(selectedValues(typeSelect));
+        const requiredDomains = uniq(
+          workingTypes
+            .map((intentType) => typeMeta(intentType)?.domain_code)
+            .filter(Boolean)
+        );
+        workingDomains = uniq([...workingDomains, ...requiredDomains]);
+        syncControls();
+      });
+
+      openButtons.forEach((button) => {
+        button.addEventListener('click', (event) => {
+          event.preventDefault();
+          openModal();
+        });
+      });
+
+      closeButtons.forEach((button) => {
+        button.addEventListener('click', (event) => {
+          event.preventDefault();
+          closeModal(true);
+        });
+      });
+
+      resetButton?.addEventListener('click', (event) => {
+        event.preventDefault();
+        workingDomains = [];
+        workingTypes = [];
+        syncControls();
+      });
+
+      applyButton?.addEventListener('click', (event) => {
+        event.preventDefault();
+        appliedDomains = uniq(workingDomains);
+        appliedTypes = uniq(workingTypes);
+        persistApplied();
+        closeModal(false);
+      });
+
+      clearButton?.addEventListener('click', (event) => {
+        event.preventDefault();
+        appliedDomains = [];
+        appliedTypes = [];
+        persistApplied();
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && !modal.hidden) {
+          closeModal(true);
         }
       });
     });

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="section-head">
+  <div>
+    <p class="eyebrow">Depuración</p>
+    <h1>Tipos predefinidos</h1>
+    <p class="muted">Referencia de los tipos permitidos al crear campos dentro de cada intent type.</p>
+  </div>
+  <div class="hero-actions">
+    <a href="/admin" class="button button-ghost">Utilidades</a>
+    <a href="/admin/schema" class="button button-secondary">Volver a Admin Schema</a>
+  </div>
+</section>
+
+<section class="card schema-admin-card">
+  <div class="title-inline">
+    <h2>Catálogo de tipos</h2>
+    <span class="pill soft">{{ predefined_types|length }}</span>
+  </div>
+  <div class="schema-stack">
+    {% for item in predefined_types %}
+      <details class="schema-editor-item" open>
+        <summary>
+          <strong>{{ item.label }}</strong>
+          <span class="small-note">{{ item.value }}</span>
+        </summary>
+        <div class="schema-field-form">
+          <p class="muted">{{ item.description }}</p>
+          {% if item.validation_fields %}
+            <div class="inline-pills">
+              {% for field in item.validation_fields %}
+                <span class="pill soft">{{ field }}</span>
+              {% endfor %}
+            </div>
+          {% else %}
+            <p class="small-note">No requiere validaciones adicionales.</p>
+          {% endif %}
+        </div>
+      </details>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

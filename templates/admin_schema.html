@@ -1,0 +1,1841 @@
+{% extends "base.html" %}
+
+{% macro field_rows(fields, field_type_catalog, show_add_button=true) %}
+  <div class="schema-inline-fields" data-field-group="field">
+    <div class="schema-inline-fields-head">
+      <span>Campos del intent_type</span>
+      {% if show_add_button %}
+        <button type="button" class="button button-secondary button-small" data-add-field-row="field">Añadir campo</button>
+      {% endif %}
+    </div>
+    <div class="schema-inline-field-list">
+      <div class="schema-compact-field-grid schema-compact-field-grid-header" aria-hidden="true">
+        <span class="small-note">Campo</span>
+        <span class="small-note">Descripción</span>
+        <span class="small-note">Tipo</span>
+        <span class="small-note">Validación</span>
+      </div>
+      {% set ordered_fields = fields if fields else [] %}
+      {% if ordered_fields %}
+        {% for field in ordered_fields %}
+          <div class="schema-inline-field-card schema-inline-field-card-compact {{ 'schema-inline-field-card-system' if field.is_system else '' }}" data-field-row {{ 'draggable=true' if not field.is_system else '' }}>
+            <div class="schema-field-storage" hidden>
+              <input type="hidden" name="field_field_required" value="{{ field.required }}" data-field="required">
+              <input type="hidden" name="field_field_when_field" value="{{ field.when_field }}" data-field="when_field">
+              <input type="hidden" name="field_field_when_operator" value="{{ field.when_operator }}" data-field="when_operator">
+              <input type="hidden" name="field_field_when_value" value="{{ field.when_value }}" data-field="when_value">
+              <input type="hidden" name="field_field_name" value="{{ field.name }}" data-field="name" data-field-name-input>
+              <input type="hidden" name="field_field_label_es" value="{{ field.label_es }}" data-field="label_es">
+              <input type="hidden" name="field_field_value_type" value="{{ field.value_type }}" data-field="value_type" data-field-type>
+              <input type="hidden" name="field_field_choices_text" value="{{ field.choices_text }}" data-field="choices_text">
+              <input type="hidden" name="field_field_min_value" value="{{ field.min_value }}" data-field="min_value">
+              <input type="hidden" name="field_field_max_value" value="{{ field.max_value }}" data-field="max_value">
+              <input type="hidden" name="field_field_min_length" value="{{ field.min_length }}" data-field="min_length">
+              <input type="hidden" name="field_field_max_length" value="{{ field.max_length }}" data-field="max_length">
+              <input type="hidden" name="field_field_min_date" value="{{ field.min_date }}" data-field="min_date">
+              <input type="hidden" name="field_field_max_date" value="{{ field.max_date }}" data-field="max_date">
+              <input type="hidden" name="field_field_min_time" value="{{ field.min_time }}" data-field="min_time">
+              <input type="hidden" name="field_field_max_time" value="{{ field.max_time }}" data-field="max_time">
+              <input type="hidden" name="field_field_min_datetime" value="{{ field.min_datetime }}" data-field="min_datetime">
+              <input type="hidden" name="field_field_max_datetime" value="{{ field.max_datetime }}" data-field="max_datetime">
+              <input type="hidden" name="field_field_budget_fix_or_range" value="{{ field.budget_fix_or_range }}" data-field="budget_fix_or_range">
+              <input type="hidden" name="field_field_budget_unit" value="{{ field.budget_unit }}" data-field="budget_unit">
+              <input type="hidden" name="field_field_system" value="{{ '1' if field.is_system else '0' }}" data-field="system">
+              <input type="hidden" name="field_field_removable" value="{{ '1' if field.removable else '0' }}" data-field="removable">
+            </div>
+            <div class="schema-compact-field-grid">
+              <div class="schema-readonly-cell">
+                <strong>
+                  {% if not field.is_system %}
+                    <span class="drag-handle" data-field-drag-handle draggable="true" aria-hidden="true" title="Arrastra para cambiar el orden">⋮⋮</span>
+                  {% else %}
+                    <span class="drag-handle drag-handle-placeholder" aria-hidden="true">⋮⋮</span>
+                  {% endif %}
+                  <span class="schema-required-icon" aria-hidden="true" title="Campo obligatorio" {% if field.required != 'always' %}hidden{% endif %}>✱</span>
+                  <span class="schema-conditional-icon" aria-hidden="true" title="Campo condicional" {% if field.required != 'conditional' %}hidden{% endif %}>◌</span>
+                  <span class="schema-field-name-text" data-field-summary="name">{{ field.summary_name }}</span>
+                </strong>
+              </div>
+              <div class="schema-readonly-cell">
+                <span data-field-summary="label">{{ field.label_es }}</span>
+              </div>
+              <div class="schema-readonly-cell">
+                <span data-field-summary="type">{{ field.value_type }}</span>
+              </div>
+              <div class="schema-readonly-cell schema-readonly-cell-wide">
+                <span data-field-summary="validation"></span>
+              </div>
+            </div>
+            <div class="schema-inline-field-row-actions">
+              <button type="button" class="button button-secondary button-small icon-only-button" data-edit-field-row title="Editar campo" aria-label="Editar campo">✎</button>
+              {% if field.removable %}
+                <button type="button" class="row-link-tool danger-link icon-only-link" data-remove-field-row title="Quitar campo" aria-label="Quitar campo">🗑</button>
+              {% else %}
+                <span class="icon-only-link icon-only-link-placeholder" aria-hidden="true">🗑</span>
+              {% endif %}
+            </div>
+            <p class="schema-inline-field-error" data-field-row-error hidden></p>
+          </div>
+        {% endfor %}
+      {% else %}
+        <div class="schema-inline-field-card schema-inline-field-card-compact" data-field-row draggable="true">
+          <div class="schema-field-storage" hidden>
+            <input type="hidden" name="field_field_required" value="never" data-field="required">
+            <input type="hidden" name="field_field_when_field" value="" data-field="when_field">
+            <input type="hidden" name="field_field_when_operator" value="equals" data-field="when_operator">
+            <input type="hidden" name="field_field_when_value" value="" data-field="when_value">
+            <input type="hidden" name="field_field_name" value="" data-field="name" data-field-name-input>
+            <input type="hidden" name="field_field_label_es" value="" data-field="label_es">
+            <input type="hidden" name="field_field_value_type" value="" data-field="value_type" data-field-type>
+            <input type="hidden" name="field_field_choices_text" value="" data-field="choices_text">
+            <input type="hidden" name="field_field_min_value" value="" data-field="min_value">
+            <input type="hidden" name="field_field_max_value" value="" data-field="max_value">
+            <input type="hidden" name="field_field_min_length" value="" data-field="min_length">
+            <input type="hidden" name="field_field_max_length" value="" data-field="max_length">
+            <input type="hidden" name="field_field_min_date" value="" data-field="min_date">
+            <input type="hidden" name="field_field_max_date" value="" data-field="max_date">
+            <input type="hidden" name="field_field_min_time" value="" data-field="min_time">
+            <input type="hidden" name="field_field_max_time" value="" data-field="max_time">
+            <input type="hidden" name="field_field_min_datetime" value="" data-field="min_datetime">
+            <input type="hidden" name="field_field_max_datetime" value="" data-field="max_datetime">
+            <input type="hidden" name="field_field_budget_fix_or_range" value="" data-field="budget_fix_or_range">
+            <input type="hidden" name="field_field_budget_unit" value="" data-field="budget_unit">
+            <input type="hidden" name="field_field_system" value="0" data-field="system">
+            <input type="hidden" name="field_field_removable" value="1" data-field="removable">
+          </div>
+          <div class="schema-compact-field-grid">
+            <div class="schema-readonly-cell">
+              <strong><span class="drag-handle" data-field-drag-handle draggable="true" aria-hidden="true" title="Arrastra para cambiar el orden">⋮⋮</span><span class="schema-field-name-text" data-field-summary="name">Nuevo campo</span></strong>
+            </div>
+            <div class="schema-readonly-cell">
+              <span data-field-summary="label">Sin definir</span>
+            </div>
+            <div class="schema-readonly-cell">
+              <span data-field-summary="type">Sin tipo</span>
+            </div>
+            <div class="schema-readonly-cell schema-readonly-cell-wide">
+              <span data-field-summary="validation">Sin restricciones</span>
+            </div>
+          </div>
+          <div class="schema-inline-field-row-actions">
+            <button type="button" class="button button-secondary button-small icon-only-button" data-edit-field-row title="Editar campo" aria-label="Editar campo">✎</button>
+            <button type="button" class="row-link-tool danger-link icon-only-link" data-remove-field-row title="Quitar campo" aria-label="Quitar campo">🗑</button>
+          </div>
+          <p class="schema-inline-field-error" data-field-row-error hidden></p>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+{% endmacro %}
+
+{% block content %}
+<section class="section-head">
+  <div>
+    <p class="eyebrow">Depuración</p>
+    <h1>Admin Schema</h1>
+    <p class="muted">Cada dominio agrupa sus intent types. Los cambios se aplican con el botón de guardar dentro de cada intent type o desde los modales de dominio.</p>
+  </div>
+  <div class="hero-actions">
+    <a href="/admin" class="button button-ghost">Utilidades</a>
+    <button type="button" class="button button-primary" data-open-domain-create>Nuevo dominio</button>
+    <a href="/admin/schema/types" class="button button-secondary">Tipos predefinidos</a>
+  </div>
+</section>
+
+<section class="card schema-admin-card">
+  <div class="title-inline">
+    <h2>Dominios</h2>
+    <span class="pill soft">{{ domains|length }}</span>
+  </div>
+  <div class="schema-search-box">
+    <label class="search-field-stack">
+      <span>Buscar domain o intent_type</span>
+      <input
+        type="search"
+        placeholder="Busca por code, name, intent_type o display_name"
+        data-schema-search-input
+      >
+    </label>
+    <p class="small-note">El filtro busca en `domain.code`, `domain.name`, `intent_type` y `display_name`.</p>
+  </div>
+  <div class="schema-stack">
+    <form action="/admin/schema/domains/reorder" method="post" id="domain-reorder-form" hidden>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div id="domain-reorder-storage"></div>
+    </form>
+    <form action="/admin/schema/intents/reorder" method="post" id="intent-reorder-form" hidden>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="domain_code" id="intent-reorder-domain-code">
+      <div id="intent-reorder-storage"></div>
+    </form>
+
+    {% for domain in domain_groups %}
+      <details class="schema-editor-item schema-domain-card" data-schema-domain="{{ domain.code }}" draggable="true">
+        <summary>
+          <div class="schema-domain-summary-copy">
+            <strong>
+              <span class="drag-handle" aria-hidden="true" title="Arrastra para cambiar el orden">⋮⋮</span>
+              <span data-schema-domain-name>{{ domain.name }}</span>
+            </strong>
+            <span class="small-note" data-schema-domain-code>{{ domain.code }}</span>
+          </div>
+          <div class="schema-domain-summary-actions">
+            <button
+              type="button"
+              class="button button-secondary button-small icon-only-button"
+              data-open-domain-edit
+              data-domain-code="{{ domain.code }}"
+              data-domain-name="{{ domain.name }}"
+              title="Editar dominio"
+              aria-label="Editar dominio"
+            >
+              ✎
+            </button>
+            <form action="/admin/schema/domains/delete" method="post" class="schema-inline-delete schema-domain-inline-delete">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="code" value="{{ domain.code }}">
+              <button type="submit" class="row-link-tool danger-link icon-only-link" title="Borrar dominio" aria-label="Borrar dominio">🗑</button>
+            </form>
+            <button
+              type="button"
+              class="button button-secondary button-small"
+              data-open-intent-create
+              data-domain-code="{{ domain.code }}"
+              data-domain-name="{{ domain.name }}"
+            >
+              Nuevo Tipo de Intención
+            </button>
+            <span class="pill soft">{{ domain.intent_types|length }}</span>
+          </div>
+        </summary>
+
+        <div class="schema-domain-body">
+          <div class="schema-stack schema-intent-list">
+            {% for item in domain.intent_types %}
+              <details class="schema-editor-item schema-intent-item" data-schema-intent="{{ item.intent_type }}" data-schema-intent-domain="{{ domain.code }}" draggable="true">
+                <summary>
+                  <div class="schema-intent-summary-copy">
+                    <strong><span class="drag-handle" data-intent-drag-handle draggable="true" aria-hidden="true" title="Arrastra para cambiar el orden">⋮⋮</span><span class="schema-intent-name-text" data-schema-intent-name>{{ item.display_name }}</span></strong>
+                    <span class="small-note">
+                      <span data-schema-intent-code>{{ item.intent_type }}</span> · {{ item.budget_policy_display }}
+                    </span>
+                  </div>
+                  <div class="schema-intent-summary-actions">
+                    <button
+                      type="button"
+                      class="button button-secondary button-small icon-only-button"
+                      data-open-intent-edit
+                      title="Editar intent_type"
+                      aria-label="Editar intent_type"
+                    >
+                      ✎
+                    </button>
+                    <form action="/admin/schema/intents/delete" method="post" class="schema-inline-delete schema-intent-inline-delete">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <input type="hidden" name="intent_type" value="{{ item.intent_type }}">
+                      <button type="submit" class="row-link-tool danger-link icon-only-link" title="Borrar intent_type" aria-label="Borrar intent_type">🗑</button>
+                    </form>
+                    <button type="button" class="button button-secondary button-small" data-add-field-row="field">Añadir campo</button>
+                  </div>
+                </summary>
+                <form action="/admin/schema/intents/update" method="post" class="schema-intent-form">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="original_intent_type" value="{{ item.intent_type }}">
+                  <input type="hidden" name="intent_domain" value="{{ domain.code }}">
+                  <input type="hidden" name="intent_type" value="{{ item.intent_type }}" data-intent-type-input>
+                  <input type="hidden" name="display_name" value="{{ item.display_name }}" data-intent-display-name-input>
+
+                  {{ field_rows(item.field_specs, field_type_catalog, false) }}
+
+                  <label class="search-field-stack">
+                    <span>Ejemplos, una línea por ejemplo</span>
+                    <textarea name="examples_text" rows="3">{% for example in item.examples %}{{ example }}{% if not loop.last %}
+{% endif %}{% endfor %}</textarea>
+                  </label>
+                </form>
+              </details>
+            {% endfor %}
+          </div>
+        </div>
+      </details>
+    {% endfor %}
+  </div>
+</section>
+
+<div class="filter-modal" id="domain-create-modal" hidden>
+  <div class="filter-modal-backdrop" data-domain-create-close></div>
+  <div class="filter-modal-panel">
+    <div class="filter-modal-head">
+      <div>
+        <strong>Nuevo dominio</strong>
+        <span class="small-note">Crea un nuevo intent_domain con su nombre visible en español.</span>
+      </div>
+      <button type="button" class="filter-modal-close" data-domain-create-close>Cerrar</button>
+    </div>
+    <div class="filter-modal-body">
+      <form action="/admin/schema/domains/create" method="post" class="filter-modal-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label class="search-field-stack">
+          <span>intent_domain</span>
+          <input type="text" name="code" placeholder="fashion_brands" required>
+        </label>
+        <label class="search-field-stack">
+          <span>Nombre visible en español</span>
+          <input type="text" name="name" placeholder="Moda y marcas" required>
+        </label>
+        <div class="filter-modal-actions">
+          <button type="button" class="button button-secondary" data-domain-create-close>Cancelar</button>
+          <button type="submit" class="button button-primary">Crear dominio</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="filter-modal" id="intent-modal" hidden>
+  <div class="filter-modal-backdrop" data-intent-modal-close></div>
+  <div class="filter-modal-panel">
+    <div class="filter-modal-head">
+      <div>
+        <strong>Editar intent_type</strong>
+        <span class="small-note">Puedes cambiar el código y el nombre visible del intent_type.</span>
+      </div>
+      <button type="button" class="filter-modal-close" data-intent-modal-close>Cerrar</button>
+    </div>
+    <div class="filter-modal-body">
+      <form class="filter-modal-form" id="intent-modal-form">
+        <label class="search-field-stack">
+          <span>intent_type</span>
+          <input type="text" name="intent_type" id="intent-modal-intent-type" required>
+        </label>
+        <label class="search-field-stack">
+          <span>Nombre visible en español</span>
+          <input type="text" name="display_name" id="intent-modal-display-name" required>
+        </label>
+        <div class="filter-modal-actions">
+          <button type="button" class="button button-secondary" data-intent-modal-close>Cancelar</button>
+          <button type="submit" class="button button-primary" data-dirty-submit disabled>Guardar cambios</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="filter-modal" id="domain-modal" hidden>
+  <div class="filter-modal-backdrop" data-domain-modal-close></div>
+  <div class="filter-modal-panel">
+    <div class="filter-modal-head">
+      <div>
+        <strong>Editar dominio</strong>
+        <span class="small-note">Puedes cambiar el código y el nombre del dominio.</span>
+      </div>
+      <button type="button" class="filter-modal-close" data-domain-modal-close>Cerrar</button>
+    </div>
+    <div class="filter-modal-body">
+      <form action="/admin/schema/domains/update" method="post" class="filter-modal-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="original_code" id="domain-modal-original-code">
+        <label class="search-field-stack">
+          <span>intent_domain</span>
+          <input type="text" name="code" id="domain-modal-code" required>
+        </label>
+        <label class="search-field-stack">
+          <span>Nombre visible en español</span>
+          <input type="text" name="name" id="domain-modal-name" required>
+        </label>
+        <div class="filter-modal-actions">
+          <button type="button" class="button button-secondary" data-domain-modal-close>Cancelar</button>
+          <button type="submit" class="button button-primary" data-dirty-submit disabled>Guardar dominio</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="category-modal" id="intent-create-modal" hidden>
+  <div class="category-modal-backdrop" data-intent-create-close></div>
+  <div class="category-modal-panel category-modal-panel-wide">
+    <div class="category-modal-head">
+      <div>
+        <strong>Nuevo intent_type</strong>
+        <span class="small-note" id="intent-create-domain-label">Selecciona los datos del nuevo intent_type.</span>
+      </div>
+      <button type="button" class="category-modal-close" data-intent-create-close>Cerrar</button>
+    </div>
+    <div class="category-modal-body">
+      <form action="/admin/schema/intents/create" method="post" class="schema-intent-form" id="intent-create-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="intent_domain" id="intent-create-domain-code">
+
+        <div class="schema-intent-grid schema-intent-grid-compact schema-intent-grid-create">
+          <label class="search-field-stack">
+            <span>intent_type</span>
+            <input type="text" name="intent_type" placeholder="restaurant_booking" required>
+          </label>
+          <label class="search-field-stack">
+            <span>Nombre visible en español</span>
+            <input type="text" name="display_name" placeholder="Reserva de restaurante" required>
+          </label>
+        </div>
+
+        {{ field_rows(default_field_specs, field_type_catalog) }}
+
+        <label class="search-field-stack">
+          <span>Ejemplos, una línea por ejemplo</span>
+          <textarea name="examples_text" rows="3"></textarea>
+        </label>
+
+        <div class="category-modal-actions">
+          <button type="button" class="button button-secondary" data-intent-create-close>Cancelar</button>
+          <button type="submit" class="button button-primary">Crear intent_type</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<template id="schema-field-row-template">
+  <div class="schema-inline-field-card schema-inline-field-card-compact" data-field-row>
+    <div class="schema-field-storage" hidden>
+      <input type="hidden" data-field="required" value="never">
+      <input type="hidden" data-field="when_field" value="">
+      <input type="hidden" data-field="when_operator" value="equals">
+      <input type="hidden" data-field="when_value" value="">
+      <input type="hidden" data-field="name" value="" data-field-name-input>
+      <input type="hidden" data-field="label_es" value="">
+      <input type="hidden" data-field="value_type" value="" data-field-type>
+      <input type="hidden" data-field="choices_text" value="">
+      <input type="hidden" data-field="min_value" value="">
+      <input type="hidden" data-field="max_value" value="">
+      <input type="hidden" data-field="min_length" value="">
+      <input type="hidden" data-field="max_length" value="">
+      <input type="hidden" data-field="min_date" value="">
+      <input type="hidden" data-field="max_date" value="">
+      <input type="hidden" data-field="min_time" value="">
+      <input type="hidden" data-field="max_time" value="">
+      <input type="hidden" data-field="min_datetime" value="">
+      <input type="hidden" data-field="max_datetime" value="">
+      <input type="hidden" data-field="budget_fix_or_range" value="">
+      <input type="hidden" data-field="budget_unit" value="">
+      <input type="hidden" data-field="system" value="0">
+      <input type="hidden" data-field="removable" value="1">
+    </div>
+      <div class="schema-compact-field-grid">
+        <div class="schema-readonly-cell">
+        <span class="small-note">Campo</span>
+        <strong><span class="drag-handle" data-field-drag-handle draggable="true" aria-hidden="true" title="Arrastra para cambiar el orden">⋮⋮</span><span class="schema-required-icon" aria-hidden="true" title="Campo obligatorio" hidden>✱</span><span class="schema-conditional-icon" aria-hidden="true" title="Campo condicional" hidden>◌</span><span class="schema-field-name-text" data-field-summary="name">Nuevo campo</span></strong>
+        </div>
+        <div class="schema-readonly-cell">
+          <span class="small-note">Descripción</span>
+          <span data-field-summary="label">Sin definir</span>
+        </div>
+      <div class="schema-readonly-cell">
+        <span class="small-note">Tipo</span>
+        <span data-field-summary="type">Sin tipo</span>
+      </div>
+      <div class="schema-readonly-cell schema-readonly-cell-wide">
+        <span class="small-note">Validación</span>
+        <span data-field-summary="validation">Sin restricciones</span>
+      </div>
+    </div>
+    <div class="schema-inline-field-row-actions">
+      <button type="button" class="button button-secondary button-small icon-only-button" data-edit-field-row title="Editar campo" aria-label="Editar campo">✎</button>
+      <button type="button" class="row-link-tool danger-link icon-only-link" data-remove-field-row title="Quitar campo" aria-label="Quitar campo">🗑</button>
+    </div>
+    <p class="schema-inline-field-error" data-field-row-error hidden></p>
+  </div>
+</template>
+
+<div class="category-modal" id="field-editor-modal" hidden>
+  <div class="category-modal-backdrop" data-field-editor-close></div>
+  <div class="category-modal-panel">
+    <div class="category-modal-head">
+      <div>
+        <strong>Editar campo</strong>
+        <span class="small-note">Configura nombre, tipo y validaciones del campo.</span>
+      </div>
+      <button type="button" class="category-modal-close" data-field-editor-close>Cerrar</button>
+    </div>
+    <div class="category-modal-body">
+      <div class="schema-inline-field-grid schema-inline-field-grid-editor">
+        <label class="search-field-stack schema-editor-required-stack">
+          <span>Obligatoriedad</span>
+          <select id="field-editor-required-mode">
+            {% for item in required_mode_catalog %}
+              <option value="{{ item.value }}">{{ item.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="search-field-stack" id="field-editor-name-wrap">
+          <span>Nombre interno</span>
+          <input type="text" id="field-editor-name" placeholder="Nombre interno">
+        </label>
+        <label class="search-field-stack" id="field-editor-label-wrap">
+          <span>Descripción en español</span>
+          <input type="text" id="field-editor-label" placeholder="Etiqueta en español">
+        </label>
+      </div>
+      <div class="schema-inline-field-grid schema-inline-field-grid-main">
+        <label class="search-field-stack" id="field-editor-type-wrap">
+          <span>Tipo</span>
+          <select id="field-editor-type">
+            <option value="">Selecciona tipo</option>
+            {% for item in field_type_catalog %}
+              <option value="{{ item.value }}">{{ item.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+
+      <div class="schema-inline-constraints" id="field-editor-constraints">
+        <div class="schema-conditional-group schema-constraint-wide" id="field-editor-conditional-group" hidden>
+          <div class="schema-conditional-group-head">Condición de obligatoriedad</div>
+          <div class="schema-conditional-group-grid">
+            <label class="search-field-stack schema-constraint" data-editor-constraint-group="required_when_field">
+              <span>Campo de condición</span>
+              <select id="field-editor-when-field">
+                <option value="">Selecciona un campo</option>
+              </select>
+            </label>
+            <label class="search-field-stack schema-constraint" data-editor-constraint-group="required_when_operator">
+              <span>Operador</span>
+              <select id="field-editor-when-operator">
+                {% for item in condition_operator_catalog %}
+                  <option value="{{ item.value }}">{{ item.label }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label class="search-field-stack schema-constraint" data-editor-constraint-group="required_when_value">
+              <span>Valor de condición</span>
+              <input type="text" id="field-editor-when-value" placeholder="Ej.: presencial o presencial, híbrida">
+              <select id="field-editor-when-value-select" hidden>
+                <option value="">Selecciona un valor</option>
+              </select>
+              <select id="field-editor-when-value-multi" multiple size="4" hidden></select>
+              <small class="small-note" id="field-editor-when-value-help" hidden></small>
+            </label>
+          </div>
+        </div>
+        <label class="search-field-stack schema-constraint" data-editor-constraint-group="budget_mode">
+          <span>Tipo de precio</span>
+          <select id="field-editor-budget-fix-or-range">
+            <option value="">No aplica</option>
+            {% for item in budget_range_catalog %}
+              <option value="{{ item.value }}">{{ item.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="search-field-stack schema-constraint" data-editor-constraint-group="budget_unit">
+          <span>Unidad de precio</span>
+          <select id="field-editor-budget-unit">
+            <option value="">No aplica</option>
+            {% for item in budget_unit_catalog %}
+              <option value="{{ item.value }}">{{ item.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="search-field-stack schema-constraint" data-editor-constraint-group="number">
+          <span>Mín. numérico</span>
+          <input type="text" id="field-editor-min-value" placeholder="Ej.: 1">
+        </label>
+        <label class="search-field-stack schema-constraint" data-editor-constraint-group="number">
+          <span>Máx. numérico</span>
+          <input type="text" id="field-editor-max-value" placeholder="Ej.: 999">
+        </label>
+        <label class="search-field-stack schema-constraint" data-editor-constraint-group="length">
+          <span>Mínimo de caracteres</span>
+          <input type="text" id="field-editor-min-length" placeholder="Ej.: 1">
+        </label>
+        <label class="search-field-stack schema-constraint" data-editor-constraint-group="length">
+          <span>Máximo de caracteres</span>
+          <input type="text" id="field-editor-max-length" placeholder="Ej.: 300">
+        </label>
+        <label class="search-field-stack schema-constraint" data-editor-constraint-group="date_min">
+          <span>Fecha desde</span>
+          <input type="date" id="field-editor-min-date">
+        </label>
+        <label class="search-field-stack schema-constraint" data-editor-constraint-group="checkin_special">
+          <span>CheckIn mínimo</span>
+          <input type="text" value="Hoy o posterior" readonly>
+        </label>
+        <label class="search-field-stack schema-constraint" data-editor-constraint-group="checkout_special">
+          <span>Campo CheckIn de referencia</span>
+          <select id="field-editor-checkout-reference">
+            <option value="">Selecciona un campo CheckIn Date</option>
+          </select>
+          <small class="small-note" id="field-editor-checkout-note" hidden></small>
+        </label>
+        <label class="search-field-stack schema-constraint" data-editor-constraint-group="date_max">
+          <span>Fecha hasta</span>
+          <input type="date" id="field-editor-max-date">
+        </label>
+        <label class="search-field-stack schema-constraint" data-editor-constraint-group="time">
+          <span>Hora desde</span>
+          <input type="time" id="field-editor-min-time">
+        </label>
+        <label class="search-field-stack schema-constraint" data-editor-constraint-group="time">
+          <span>Hora hasta</span>
+          <input type="time" id="field-editor-max-time">
+        </label>
+        <label class="search-field-stack schema-constraint" data-editor-constraint-group="datetime">
+          <span>Fecha-hora desde</span>
+          <input type="datetime-local" id="field-editor-min-datetime">
+        </label>
+        <label class="search-field-stack schema-constraint" data-editor-constraint-group="datetime">
+          <span>Fecha-hora hasta</span>
+          <input type="datetime-local" id="field-editor-max-datetime">
+        </label>
+        <label class="search-field-stack schema-constraint schema-constraint-wide" data-editor-constraint-group="choices">
+          <span>Lista de valores</span>
+          <textarea id="field-editor-choices" rows="3" placeholder="Una opción por línea"></textarea>
+        </label>
+      </div>
+
+      <p class="schema-inline-field-error" id="field-editor-error" hidden></p>
+
+      <div class="category-modal-actions">
+        <div class="schema-inline-actions-right">
+          <button type="button" class="button button-secondary" data-field-editor-close>Cancelar</button>
+          <button type="button" class="button button-primary" id="field-editor-save">Guardar campo</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const ADMIN_SCHEMA_OPEN_STATE_KEY = 'admin-schema-open-state';
+  const fieldTemplate = document.getElementById('schema-field-row-template');
+  const domainReorderForm = document.getElementById('domain-reorder-form');
+  const domainReorderStorage = document.getElementById('domain-reorder-storage');
+  const intentReorderForm = document.getElementById('intent-reorder-form');
+  const intentReorderStorage = document.getElementById('intent-reorder-storage');
+  const intentReorderDomainCode = document.getElementById('intent-reorder-domain-code');
+  const domainCreateModal = document.getElementById('domain-create-modal');
+  const domainModal = document.getElementById('domain-modal');
+  const intentModal = document.getElementById('intent-modal');
+  const intentModalForm = document.getElementById('intent-modal-form');
+  const intentModalIntentType = document.getElementById('intent-modal-intent-type');
+  const intentModalDisplayName = document.getElementById('intent-modal-display-name');
+  const intentCreateModal = document.getElementById('intent-create-modal');
+  const fieldEditorModal = document.getElementById('field-editor-modal');
+  const fieldEditorName = document.getElementById('field-editor-name');
+  const fieldEditorNameWrap = document.getElementById('field-editor-name-wrap');
+  const fieldEditorLabel = document.getElementById('field-editor-label');
+  const fieldEditorLabelWrap = document.getElementById('field-editor-label-wrap');
+  const fieldEditorType = document.getElementById('field-editor-type');
+  const fieldEditorTypeWrap = document.getElementById('field-editor-type-wrap');
+  const fieldEditorRequiredMode = document.getElementById('field-editor-required-mode');
+  const fieldEditorWhenField = document.getElementById('field-editor-when-field');
+  const fieldEditorWhenOperator = document.getElementById('field-editor-when-operator');
+  const fieldEditorWhenValue = document.getElementById('field-editor-when-value');
+  const fieldEditorWhenValueSelect = document.getElementById('field-editor-when-value-select');
+  const fieldEditorWhenValueMulti = document.getElementById('field-editor-when-value-multi');
+  const fieldEditorWhenValueHelp = document.getElementById('field-editor-when-value-help');
+  const fieldEditorConditionalGroup = document.getElementById('field-editor-conditional-group');
+  const fieldEditorMinValue = document.getElementById('field-editor-min-value');
+  const fieldEditorMaxValue = document.getElementById('field-editor-max-value');
+  const fieldEditorMinLength = document.getElementById('field-editor-min-length');
+  const fieldEditorMaxLength = document.getElementById('field-editor-max-length');
+  const fieldEditorMinDate = document.getElementById('field-editor-min-date');
+  const fieldEditorMaxDate = document.getElementById('field-editor-max-date');
+  const fieldEditorMinTime = document.getElementById('field-editor-min-time');
+  const fieldEditorMaxTime = document.getElementById('field-editor-max-time');
+  const fieldEditorMinDatetime = document.getElementById('field-editor-min-datetime');
+  const fieldEditorMaxDatetime = document.getElementById('field-editor-max-datetime');
+  const fieldEditorChoices = document.getElementById('field-editor-choices');
+  const fieldEditorCheckoutReference = document.getElementById('field-editor-checkout-reference');
+  const fieldEditorCheckoutNote = document.getElementById('field-editor-checkout-note');
+  const fieldEditorBudgetFixOrRange = document.getElementById('field-editor-budget-fix-or-range');
+  const fieldEditorBudgetUnit = document.getElementById('field-editor-budget-unit');
+  const fieldEditorError = document.getElementById('field-editor-error');
+  const fieldEditorSave = document.getElementById('field-editor-save');
+  let activeIntentForm = null;
+  let activeFieldRow = null;
+  let draggedFieldRow = null;
+  let draggedFieldHandle = null;
+  let draggedIntentCard = null;
+  let draggedIntentOriginalOrder = '';
+  let draggedDomainCard = null;
+  let draggedDomainOriginalOrder = '';
+  let suppressNextSummaryToggle = false;
+
+  function rememberAdminSchemaOpenState(source) {
+    const root = source instanceof Element ? source : null;
+    const sourceDomainCard = root?.closest?.('[data-schema-domain][open]') || null;
+    const sourceIntentCard = root?.closest?.('[data-schema-intent][open]') || null;
+    const domainCard = sourceDomainCard || document.querySelector('[data-schema-domain][open]');
+    const intentCard = sourceIntentCard || document.querySelector('[data-schema-intent][open]');
+    const payload = {
+      domain: domainCard?.dataset.schemaDomain || '',
+      intent: intentCard?.dataset.schemaIntent || '',
+    };
+    sessionStorage.setItem(ADMIN_SCHEMA_OPEN_STATE_KEY, JSON.stringify(payload));
+  }
+
+  function restoreAdminSchemaOpenState() {
+    let payload = null;
+    try {
+      payload = JSON.parse(sessionStorage.getItem(ADMIN_SCHEMA_OPEN_STATE_KEY) || 'null');
+    } catch (_error) {
+      payload = null;
+    }
+    if (!payload) return;
+    if (payload.domain) {
+      const domainCard = document.querySelector(`[data-schema-domain="${CSS.escape(payload.domain)}"]`);
+      if (domainCard) domainCard.open = true;
+    }
+    if (payload.intent) {
+      const intentCard = document.querySelector(`[data-schema-intent="${CSS.escape(payload.intent)}"]`);
+      if (intentCard) {
+        const parentDomain = intentCard.closest('[data-schema-domain]');
+        if (parentDomain) parentDomain.open = true;
+        intentCard.open = true;
+      }
+    }
+    sessionStorage.removeItem(ADMIN_SCHEMA_OPEN_STATE_KEY);
+  }
+
+  function serializedFormState(form) {
+    const data = new FormData(form);
+    const pairs = [];
+    for (const [key, value] of data.entries()) {
+      if (key === 'csrf_token') continue;
+      pairs.push([key, String(value)]);
+    }
+    return JSON.stringify(pairs);
+  }
+
+  function updateDirtyButtons(form) {
+    if (!(form instanceof HTMLFormElement)) return;
+    const buttons = form.querySelectorAll('[data-dirty-submit]');
+    if (!buttons.length) return;
+    const initial = form.dataset.initialState || '';
+    const current = serializedFormState(form);
+    const dirty = current !== initial;
+    buttons.forEach((button) => {
+      button.disabled = !dirty;
+    });
+  }
+
+  function markFormClean(form) {
+    if (!(form instanceof HTMLFormElement)) return;
+    form.dataset.initialState = serializedFormState(form);
+    updateDirtyButtons(form);
+  }
+
+  function submitDomainOrder() {
+    if (!domainReorderForm || !domainReorderStorage) return;
+    domainReorderStorage.innerHTML = '';
+    document.querySelectorAll('[data-schema-domain]').forEach((card) => {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = 'domain_order';
+      input.value = card.dataset.schemaDomain || '';
+      domainReorderStorage.appendChild(input);
+    });
+    domainReorderForm.requestSubmit();
+  }
+
+  function currentDomainOrderSignature() {
+    return Array.from(document.querySelectorAll('[data-schema-domain]'))
+      .map((card) => card.dataset.schemaDomain || '')
+      .join('|');
+  }
+
+  function currentIntentOrderSignature(domainCode) {
+    const domainCard = document.querySelector(`[data-schema-domain="${CSS.escape(domainCode)}"]`);
+    if (!domainCard) return '';
+    return Array.from(domainCard.querySelectorAll('[data-schema-intent]'))
+      .map((card) => card.dataset.schemaIntent || '')
+      .join('|');
+  }
+
+  function submitIntentOrder(domainCode) {
+    if (!intentReorderForm || !intentReorderStorage || !intentReorderDomainCode) return;
+    const domainCard = document.querySelector(`[data-schema-domain="${CSS.escape(domainCode)}"]`);
+    if (!domainCard) return;
+    intentReorderDomainCode.value = domainCode;
+    intentReorderStorage.innerHTML = '';
+    domainCard.querySelectorAll('[data-schema-intent]').forEach((card) => {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = 'intent_order';
+      input.value = card.dataset.schemaIntent || '';
+      intentReorderStorage.appendChild(input);
+    });
+    intentReorderForm.requestSubmit();
+  }
+
+  const CONSTRAINTS_BY_TYPE = {
+    'Numero Entero': ['number'],
+    'Number Real': ['number'],
+    'Importe en Euros': ['number'],
+    'System Budget': ['budget_mode', 'budget_unit', 'number'],
+    'System Location': [],
+    'Texto': ['length'],
+    'Fecha': ['date_min', 'date_max'],
+    'CheckIn Date': ['checkin_special', 'date_max'],
+    'CheckOut Date': ['checkout_special', 'date_max'],
+    'Hora-Minuto': ['time'],
+    'Fecha-Hora': ['datetime'],
+    'Lista de Valores': ['choices'],
+    'Booleano': [],
+    'Ubicacion': []
+  };
+
+  const SPECIAL_DATE_DEFAULTS = {
+    'CheckIn Date': { value: 'today', label: 'Hoy o posterior' }
+  };
+
+  function applyFieldNames(card, prefix) {
+    card.querySelectorAll('[data-field]').forEach((input) => {
+      input.name = `${prefix}_field_${input.dataset.field}`;
+    });
+  }
+
+  function getFieldInput(card, key) {
+    return card.querySelector(`[data-field="${key}"]`);
+  }
+
+  function getFieldValue(card, key) {
+    const input = getFieldInput(card, key);
+    return input ? String(input.value || '') : '';
+  }
+
+  function setFieldValue(card, key, value) {
+    const input = getFieldInput(card, key);
+    if (input) input.value = value ?? '';
+  }
+
+  function setFieldRowError(card, message) {
+    const error = card.querySelector('[data-field-row-error]');
+    if (!error) return;
+    error.hidden = !message;
+    error.textContent = message || '';
+    card.classList.toggle('schema-inline-field-card-error', Boolean(message));
+  }
+
+  function validationSummary(card) {
+    const type = getFieldValue(card, 'value_type');
+    const requiredMode = getFieldValue(card, 'required') || 'never';
+    const whenField = getFieldValue(card, 'when_field');
+    const whenOperator = getFieldValue(card, 'when_operator') || 'equals';
+    const whenValue = getFieldValue(card, 'when_value');
+    const minValue = getFieldValue(card, 'min_value');
+    const maxValue = getFieldValue(card, 'max_value');
+    const minLength = getFieldValue(card, 'min_length');
+    const maxLength = getFieldValue(card, 'max_length');
+    const minDate = getFieldValue(card, 'min_date');
+    const maxDate = getFieldValue(card, 'max_date');
+    const minTime = getFieldValue(card, 'min_time');
+    const maxTime = getFieldValue(card, 'max_time');
+    const minDatetime = getFieldValue(card, 'min_datetime');
+    const maxDatetime = getFieldValue(card, 'max_datetime');
+    const choicesText = getFieldValue(card, 'choices_text');
+    const budgetFixOrRange = getFieldValue(card, 'budget_fix_or_range');
+    const budgetUnit = getFieldValue(card, 'budget_unit');
+
+    if (type === 'System Location') {
+      if (requiredMode === 'conditional') {
+        return `Ubicación condicional · ${whenField} ${whenOperator} ${whenValue}`.trim();
+      }
+      return requiredMode === 'always' ? 'Ubicación obligatoria' : 'Ubicación opcional';
+    }
+    if (type === 'System Budget') {
+      const bits = [requiredMode === 'always' ? 'Presupuesto obligatorio' : (requiredMode === 'conditional' ? 'Presupuesto condicional' : 'Presupuesto opcional')];
+      if (requiredMode === 'conditional' && whenField && whenValue) bits.push(`${whenField} ${whenOperator} ${whenValue}`);
+      if (budgetFixOrRange === 'fix') bits.push('fijo');
+      if (budgetFixOrRange === 'range') bits.push('rango');
+      if (budgetUnit) bits.push(budgetUnit);
+      if (minValue) bits.push(`mín. ${minValue}`);
+      if (maxValue) bits.push(`máx. ${maxValue}`);
+      return bits.join(' · ');
+    }
+
+    if (type === 'Numero Entero' || type === 'Number Real' || type === 'Importe en Euros') {
+      const bits = [];
+      if (minValue) bits.push(`mín. ${minValue}`);
+      if (maxValue) bits.push(`máx. ${maxValue}`);
+      return bits.join(' · ') || 'Sin restricciones';
+    }
+    if (type === 'Texto') {
+      const bits = [];
+      if (minLength) bits.push(`mín. ${minLength} caracteres`);
+      if (maxLength) bits.push(`máx. ${maxLength} caracteres`);
+      return bits.join(' · ') || 'Sin restricciones';
+    }
+    if (type === 'Fecha') {
+      const bits = [];
+      if (minDate) bits.push(`desde ${minDate}`);
+      if (maxDate) bits.push(`hasta ${maxDate}`);
+      return bits.join(' · ') || 'Sin restricciones';
+    }
+    if (type === 'CheckIn Date') {
+      return maxDate ? `Hoy o posterior · hasta ${maxDate}` : 'Hoy o posterior';
+    }
+    if (type === 'CheckOut Date') {
+      const ref = minDate.startsWith('after:') ? minDate.slice(6) : '';
+      const bits = [];
+      if (ref) bits.push(`posterior a ${ref}`);
+      if (maxDate) bits.push(`hasta ${maxDate}`);
+      return bits.join(' · ') || 'Sin restricciones';
+    }
+    if (type === 'Hora-Minuto') {
+      const bits = [];
+      if (minTime) bits.push(`desde ${minTime}`);
+      if (maxTime) bits.push(`hasta ${maxTime}`);
+      return bits.join(' · ') || 'Sin restricciones';
+    }
+    if (type === 'Fecha-Hora') {
+      const bits = [];
+      if (minDatetime) bits.push(`desde ${minDatetime}`);
+      if (maxDatetime) bits.push(`hasta ${maxDatetime}`);
+      return bits.join(' · ') || 'Sin restricciones';
+    }
+    if (type === 'Lista de Valores') {
+      const count = choicesText.split('\n').map((item) => item.trim()).filter(Boolean).length;
+      return count ? `${count} opciones` : 'Sin opciones definidas';
+    }
+    return 'Sin restricciones';
+  }
+
+  function syncFieldSummary(card) {
+    const rawName = getFieldValue(card, 'name') || 'Nuevo campo';
+    const name = rawName === '_location' ? 'location' : (rawName === '_budget' ? 'budget' : rawName);
+    const label = getFieldValue(card, 'label_es') || 'Sin definir';
+    const type = getFieldValue(card, 'value_type') || 'Sin tipo';
+    const requiredMode = getFieldValue(card, 'required') || 'never';
+    const removable = getFieldValue(card, 'removable') === '1';
+    const map = {
+      name,
+      label,
+      type,
+      validation: validationSummary(card),
+    };
+    Object.entries(map).forEach(([key, value]) => {
+      const node = card.querySelector(`[data-field-summary="${key}"]`);
+      if (node) node.textContent = value;
+    });
+    const requiredIcon = card.querySelector('.schema-required-icon');
+    if (requiredIcon) {
+      requiredIcon.hidden = requiredMode !== 'always';
+    }
+    const conditionalIcon = card.querySelector('.schema-conditional-icon');
+    if (conditionalIcon) {
+      conditionalIcon.hidden = requiredMode !== 'conditional';
+    }
+    card.classList.toggle('schema-inline-field-card-system', getFieldValue(card, 'system') === '1');
+    const removeButton = card.querySelector('[data-remove-field-row]');
+    if (removeButton) {
+      removeButton.hidden = !removable;
+    }
+  }
+
+  function validateFieldRow(card) {
+    setFieldRowError(card, '');
+    const type = getFieldValue(card, 'value_type');
+    const minValue = getFieldValue(card, 'min_value').trim();
+    const maxValue = getFieldValue(card, 'max_value').trim();
+    if (type === 'Numero Entero') {
+      for (const raw of [minValue, maxValue]) {
+        if (!raw) continue;
+        if (!/^-?\d+$/.test(raw)) {
+          setFieldRowError(card, 'Este campo es de tipo Numero Entero. Usa solo enteros, sin decimales.');
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  function collectCheckinFieldNames(group, excludeRow = null) {
+    if (!group) return [];
+    const names = [];
+    group.querySelectorAll('[data-field-row]').forEach((row) => {
+      if (excludeRow && row === excludeRow) return;
+      const type = getFieldValue(row, 'value_type');
+      const fieldName = getFieldValue(row, 'name').trim();
+      if (type === 'CheckIn Date' && fieldName) names.push(fieldName);
+    });
+    return names;
+  }
+
+  function collectConditionFieldNames(group, excludeRow = null) {
+    if (!group) return [];
+    const names = [];
+    group.querySelectorAll('[data-field-row]').forEach((row) => {
+      if (excludeRow && row === excludeRow) return;
+      const fieldName = getFieldValue(row, 'name').trim();
+      if (fieldName) names.push(fieldName);
+    });
+    return names;
+  }
+
+  function findFieldRowByName(group, fieldName) {
+    if (!group || !fieldName) return null;
+    return Array.from(group.querySelectorAll('[data-field-row]')).find((row) => {
+      return getFieldValue(row, 'name').trim() === fieldName;
+    }) || null;
+  }
+
+  function fieldChoiceOptions(card) {
+    if (!card) return [];
+    const type = getFieldValue(card, 'value_type');
+    if (type !== 'Lista de Valores') return [];
+    return getFieldValue(card, 'choices_text')
+      .split('\n')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function getConditionEditorValue() {
+    if (!fieldEditorWhenValueSelect.hidden) {
+      return fieldEditorWhenValueSelect.value.trim();
+    }
+    if (!fieldEditorWhenValueMulti.hidden) {
+      return Array.from(fieldEditorWhenValueMulti.selectedOptions)
+        .map((option) => option.value.trim())
+        .filter(Boolean)
+        .join(', ');
+    }
+    return fieldEditorWhenValue.value.trim();
+  }
+
+  function syncConditionValueControl() {
+    const group = activeFieldRow ? activeFieldRow.closest('[data-field-group]') : null;
+    const referenceField = fieldEditorWhenField.value.trim();
+    const operator = fieldEditorWhenOperator.value || 'equals';
+    const currentValue = getConditionEditorValue();
+    const referenceRow = findFieldRowByName(group, referenceField);
+    const options = fieldChoiceOptions(referenceRow);
+
+    fieldEditorWhenValue.hidden = false;
+    fieldEditorWhenValueSelect.hidden = true;
+    fieldEditorWhenValueMulti.hidden = true;
+    fieldEditorWhenValueHelp.hidden = true;
+    fieldEditorWhenValueHelp.textContent = '';
+
+    if (!options.length) {
+      fieldEditorWhenValue.placeholder = operator === 'in' ? 'Ej.: valor1, valor2' : 'Ej.: presencial';
+      if (!fieldEditorWhenValue.value.trim()) {
+        fieldEditorWhenValue.value = currentValue;
+      }
+      return;
+    }
+
+    if (operator === 'in') {
+      fieldEditorWhenValue.hidden = true;
+      fieldEditorWhenValueMulti.hidden = false;
+      fieldEditorWhenValueMulti.innerHTML = '';
+      const selectedValues = new Set(
+        currentValue.split(',').map((item) => item.trim()).filter(Boolean)
+      );
+      options.forEach((value) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = value;
+        option.selected = selectedValues.has(value);
+        fieldEditorWhenValueMulti.appendChild(option);
+      });
+      fieldEditorWhenValueHelp.hidden = false;
+      fieldEditorWhenValueHelp.textContent = 'Mantén Cmd o Ctrl para seleccionar varios valores.';
+      return;
+    }
+
+    fieldEditorWhenValue.hidden = true;
+    fieldEditorWhenValueSelect.hidden = false;
+    fieldEditorWhenValueSelect.innerHTML = '<option value="">Selecciona un valor</option>';
+    options.forEach((value) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = value;
+      fieldEditorWhenValueSelect.appendChild(option);
+    });
+    fieldEditorWhenValueSelect.value = options.includes(currentValue) ? currentValue : '';
+  }
+
+  function fieldBucket(card) {
+    if (!card) return 'none';
+    if (getFieldValue(card, 'system') === '1') return 'system';
+    if (getFieldValue(card, 'required') === 'always') return 'required';
+    if (getFieldValue(card, 'required') === 'conditional') return 'conditional';
+    return 'optional';
+  }
+
+  function syncFieldGroup(group) {
+    if (!group) return;
+    const prefix = group.dataset.fieldGroup;
+    const list = group.querySelector('.schema-inline-field-list');
+    const form = group.closest('form');
+    const cards = Array.from(group.querySelectorAll('.schema-inline-field-card'));
+    const systemCards = cards.filter((card) => getFieldValue(card, 'system') === '1');
+    const regularCards = cards.filter((card) => getFieldValue(card, 'system') !== '1');
+    const requiredCards = regularCards.filter((card) => getFieldValue(card, 'required') === 'always');
+    const conditionalCards = regularCards.filter((card) => getFieldValue(card, 'required') === 'conditional');
+    const optionalCards = regularCards.filter((card) => !['always', 'conditional'].includes(getFieldValue(card, 'required')));
+    if (list) {
+      [...systemCards, ...requiredCards, ...conditionalCards, ...optionalCards].forEach((card) => list.appendChild(card));
+    }
+    group.querySelectorAll('.schema-inline-field-card').forEach((card) => {
+      applyFieldNames(card, prefix);
+      syncFieldSummary(card);
+      validateFieldRow(card);
+    });
+    updateDirtyButtons(form);
+  }
+
+  function openSimpleModal(modal) {
+    if (!modal) return;
+    modal.hidden = false;
+    document.body.classList.add('has-category-modal');
+  }
+
+  function closeSimpleModal(modal) {
+    if (!modal) return;
+    modal.hidden = true;
+    if (!document.querySelector('.category-modal:not([hidden]), .filter-modal:not([hidden])')) {
+      document.body.classList.remove('has-category-modal');
+    }
+  }
+
+  function requestIntentFormSubmit(form, source = null, options = {}) {
+    if (!(form instanceof HTMLFormElement) || form.id === 'intent-create-form') return;
+    rememberAdminSchemaOpenState(source || form);
+    if (options.forceDirectSubmit) {
+      form.submit();
+      return;
+    }
+    form.requestSubmit();
+  }
+
+  function syncFieldEditorVisibility() {
+    const type = fieldEditorType.value;
+    const requiredMode = fieldEditorRequiredMode.value || 'never';
+    const isSystem = activeFieldRow ? getFieldValue(activeFieldRow, 'system') === '1' : false;
+    if (fieldEditorConditionalGroup) {
+      fieldEditorConditionalGroup.hidden = requiredMode !== 'conditional';
+    }
+    if (fieldEditorNameWrap) fieldEditorNameWrap.hidden = isSystem;
+    if (fieldEditorLabelWrap) fieldEditorLabelWrap.hidden = isSystem;
+    if (fieldEditorTypeWrap) fieldEditorTypeWrap.hidden = isSystem;
+    const groups = new Set(CONSTRAINTS_BY_TYPE[type] || []);
+    fieldEditorModal.querySelectorAll('[data-editor-constraint-group]').forEach((wrapper) => {
+      const groupName = wrapper.dataset.editorConstraintGroup;
+      const visible = groups.has(groupName) || (requiredMode === 'conditional' && groupName.startsWith('required_when_'));
+      wrapper.hidden = !visible;
+      if (!visible) {
+        wrapper.querySelectorAll('input, textarea, select').forEach((input) => {
+          if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement || input instanceof HTMLSelectElement) {
+            if (!(input instanceof HTMLInputElement && input.readOnly)) input.value = '';
+          }
+        });
+      }
+    });
+    if (requiredMode === 'conditional') {
+      const group = activeFieldRow ? activeFieldRow.closest('[data-field-group]') : null;
+      const options = collectConditionFieldNames(group, activeFieldRow);
+      const current = (fieldEditorWhenField.dataset.pendingValue || fieldEditorWhenField.value || '').trim();
+      fieldEditorWhenField.innerHTML = '<option value="">Selecciona un campo</option>';
+      options.forEach((fieldName) => {
+        const option = document.createElement('option');
+        option.value = fieldName;
+        option.textContent = fieldName;
+        fieldEditorWhenField.appendChild(option);
+      });
+      if (current && !options.includes(current)) {
+        const option = document.createElement('option');
+        option.value = current;
+        option.textContent = `${current} (actual)`;
+        fieldEditorWhenField.appendChild(option);
+      }
+      if (options.includes(current)) {
+        fieldEditorWhenField.value = current;
+      } else if (current) {
+        fieldEditorWhenField.value = current;
+      }
+      fieldEditorWhenField.dataset.pendingValue = '';
+      syncConditionValueControl();
+    }
+
+    [fieldEditorMinValue, fieldEditorMaxValue].forEach((input) => {
+      if (!input) return;
+      fieldEditorError.hidden = true;
+      fieldEditorError.textContent = '';
+      if (type === 'Numero Entero') {
+        input.inputMode = 'numeric';
+        input.placeholder = 'Ej.: 1';
+      } else if (['Number Real', 'Importe en Euros'].includes(type)) {
+        input.inputMode = 'decimal';
+        input.placeholder = 'Ej.: 1.5';
+      } else {
+        input.removeAttribute('inputmode');
+        input.placeholder = 'Ej.: 1';
+      }
+    });
+  }
+
+  function syncFieldEditorCheckoutOptions() {
+    const group = activeFieldRow ? activeFieldRow.closest('[data-field-group]') : null;
+    const options = collectCheckinFieldNames(group, activeFieldRow);
+    const current = fieldEditorCheckoutReference.value;
+    fieldEditorCheckoutReference.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Selecciona un campo CheckIn Date';
+    fieldEditorCheckoutReference.appendChild(placeholder);
+    options.forEach((fieldName) => {
+      const option = document.createElement('option');
+      option.value = fieldName;
+      option.textContent = fieldName;
+      fieldEditorCheckoutReference.appendChild(option);
+    });
+    if (options.includes(current)) {
+      fieldEditorCheckoutReference.value = current;
+    } else if (options.length) {
+      fieldEditorCheckoutReference.value = options[0];
+    } else {
+      fieldEditorCheckoutReference.value = '';
+    }
+    fieldEditorCheckoutNote.hidden = Boolean(fieldEditorCheckoutReference.value);
+    fieldEditorCheckoutNote.textContent = fieldEditorCheckoutReference.value ? '' : 'Primero crea o marca otro campo de tipo CheckIn Date.';
+  }
+
+  function clearFieldEditorError() {
+    fieldEditorError.hidden = true;
+    fieldEditorError.textContent = '';
+  }
+
+  function openFieldEditor(card) {
+    activeFieldRow = card;
+    const isSystem = getFieldValue(card, 'system') === '1';
+    const storedWhenField = getFieldValue(card, 'when_field').trim();
+    fieldEditorName.value = getFieldValue(card, 'name');
+    fieldEditorLabel.value = getFieldValue(card, 'label_es');
+    fieldEditorType.value = getFieldValue(card, 'value_type');
+    fieldEditorRequiredMode.value = getFieldValue(card, 'required') || 'never';
+    fieldEditorWhenField.dataset.pendingValue = storedWhenField;
+    fieldEditorWhenField.value = '';
+    fieldEditorWhenOperator.value = getFieldValue(card, 'when_operator') || 'equals';
+    fieldEditorWhenValue.value = getFieldValue(card, 'when_value');
+    fieldEditorWhenValueSelect.value = '';
+    fieldEditorWhenValueMulti.innerHTML = '';
+    fieldEditorMinValue.value = getFieldValue(card, 'min_value');
+    fieldEditorMaxValue.value = getFieldValue(card, 'max_value');
+    fieldEditorMinLength.value = getFieldValue(card, 'min_length');
+    fieldEditorMaxLength.value = getFieldValue(card, 'max_length');
+    const minDate = getFieldValue(card, 'min_date');
+    fieldEditorMinDate.value = minDate.startsWith('after:') || minDate === 'today' ? '' : minDate;
+    fieldEditorMaxDate.value = getFieldValue(card, 'max_date');
+    fieldEditorMinTime.value = getFieldValue(card, 'min_time');
+    fieldEditorMaxTime.value = getFieldValue(card, 'max_time');
+    fieldEditorMinDatetime.value = getFieldValue(card, 'min_datetime');
+    fieldEditorMaxDatetime.value = getFieldValue(card, 'max_datetime');
+    fieldEditorChoices.value = getFieldValue(card, 'choices_text');
+    fieldEditorBudgetFixOrRange.value = getFieldValue(card, 'budget_fix_or_range');
+    fieldEditorBudgetUnit.value = getFieldValue(card, 'budget_unit');
+    fieldEditorCheckoutReference.value = minDate.startsWith('after:') ? minDate.slice(6) : '';
+    fieldEditorName.readOnly = isSystem;
+    fieldEditorType.disabled = isSystem;
+    syncFieldEditorVisibility();
+    syncFieldEditorCheckoutOptions();
+    clearFieldEditorError();
+    openSimpleModal(fieldEditorModal);
+  }
+
+  function validateFieldEditor() {
+    clearFieldEditorError();
+    if (!fieldEditorName.value.trim()) {
+      fieldEditorError.hidden = false;
+      fieldEditorError.textContent = 'Indica un nombre interno para el campo.';
+      return { valid: false, input: fieldEditorName };
+    }
+    if (!fieldEditorLabel.value.trim()) {
+      fieldEditorError.hidden = false;
+      fieldEditorError.textContent = 'Indica una descripción en español.';
+      return { valid: false, input: fieldEditorLabel };
+    }
+    if (!fieldEditorType.value.trim()) {
+      fieldEditorError.hidden = false;
+      fieldEditorError.textContent = 'Selecciona un tipo para el campo.';
+      return { valid: false, input: fieldEditorType };
+    }
+    if (fieldEditorType.value === 'Numero Entero') {
+      for (const input of [fieldEditorMinValue, fieldEditorMaxValue]) {
+        const raw = String(input.value || '').trim();
+        if (!raw) continue;
+        if (!/^-?\d+$/.test(raw)) {
+          fieldEditorError.hidden = false;
+          fieldEditorError.textContent = 'Este campo es de tipo Numero Entero. Usa solo enteros, sin decimales.';
+          return { valid: false, input };
+        }
+      }
+    }
+    if (fieldEditorRequiredMode.value === 'conditional') {
+      if (!fieldEditorWhenField.value.trim()) {
+        fieldEditorError.hidden = false;
+        fieldEditorError.textContent = 'Selecciona el campo que activa esta obligatoriedad condicional.';
+        return { valid: false, input: fieldEditorWhenField };
+      }
+      if (!getConditionEditorValue()) {
+        fieldEditorError.hidden = false;
+        fieldEditorError.textContent = 'Indica el valor que activa esta obligatoriedad condicional.';
+        return { valid: false, input: fieldEditorWhenValueSelect.hidden ? (fieldEditorWhenValueMulti.hidden ? fieldEditorWhenValue : fieldEditorWhenValueMulti) : fieldEditorWhenValueSelect };
+      }
+    }
+    if (fieldEditorType.value === 'CheckOut Date' && !fieldEditorCheckoutReference.value.trim()) {
+      fieldEditorError.hidden = false;
+      fieldEditorError.textContent = 'Selecciona un campo CheckIn Date de referencia.';
+      return { valid: false, input: fieldEditorCheckoutReference };
+    }
+    return { valid: true, input: null };
+  }
+
+  function saveFieldEditor() {
+    if (!activeFieldRow) return;
+    const validation = validateFieldEditor();
+    if (!validation.valid) {
+      validation.input?.focus();
+      return;
+    }
+    setFieldValue(activeFieldRow, 'name', fieldEditorName.value.trim());
+    setFieldValue(activeFieldRow, 'label_es', fieldEditorLabel.value.trim());
+    setFieldValue(activeFieldRow, 'value_type', fieldEditorType.value.trim());
+    setFieldValue(activeFieldRow, 'required', fieldEditorRequiredMode.value.trim() || 'never');
+    setFieldValue(activeFieldRow, 'when_field', fieldEditorRequiredMode.value === 'conditional' ? fieldEditorWhenField.value.trim() : '');
+    setFieldValue(activeFieldRow, 'when_operator', fieldEditorRequiredMode.value === 'conditional' ? fieldEditorWhenOperator.value.trim() : 'equals');
+    setFieldValue(activeFieldRow, 'when_value', fieldEditorRequiredMode.value === 'conditional' ? getConditionEditorValue() : '');
+    setFieldValue(activeFieldRow, 'choices_text', fieldEditorChoices.value);
+    setFieldValue(activeFieldRow, 'budget_fix_or_range', fieldEditorBudgetFixOrRange.value.trim());
+    setFieldValue(activeFieldRow, 'budget_unit', fieldEditorBudgetUnit.value.trim());
+    setFieldValue(activeFieldRow, 'min_value', fieldEditorMinValue.value.trim());
+    setFieldValue(activeFieldRow, 'max_value', fieldEditorMaxValue.value.trim());
+    setFieldValue(activeFieldRow, 'min_length', fieldEditorMinLength.value.trim());
+    setFieldValue(activeFieldRow, 'max_length', fieldEditorMaxLength.value.trim());
+    setFieldValue(activeFieldRow, 'min_time', fieldEditorMinTime.value.trim());
+    setFieldValue(activeFieldRow, 'max_time', fieldEditorMaxTime.value.trim());
+    setFieldValue(activeFieldRow, 'min_datetime', fieldEditorMinDatetime.value.trim());
+    setFieldValue(activeFieldRow, 'max_datetime', fieldEditorMaxDatetime.value.trim());
+    if (fieldEditorType.value === 'CheckIn Date') {
+      setFieldValue(activeFieldRow, 'min_date', 'today');
+    } else if (fieldEditorType.value === 'CheckOut Date') {
+      setFieldValue(activeFieldRow, 'min_date', `after:${fieldEditorCheckoutReference.value.trim()}`);
+    } else {
+      setFieldValue(activeFieldRow, 'min_date', fieldEditorMinDate.value.trim());
+    }
+    setFieldValue(activeFieldRow, 'max_date', fieldEditorMaxDate.value.trim());
+    syncFieldSummary(activeFieldRow);
+    validateFieldRow(activeFieldRow);
+    const group = activeFieldRow.closest('[data-field-group]');
+    syncFieldGroup(group);
+    const form = activeFieldRow.closest('form');
+    closeSimpleModal(fieldEditorModal);
+    if (form && form.id !== 'intent-create-form') {
+      requestIntentFormSubmit(form, activeFieldRow, { forceDirectSubmit: true });
+      return;
+    }
+  }
+
+  document.querySelectorAll('[data-add-field-row]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const prefix = button.dataset.addFieldRow;
+      const group =
+        button.closest('[data-field-group]') ||
+        button.closest('.schema-intent-item')?.querySelector('[data-field-group]') ||
+        button.closest('form')?.querySelector('[data-field-group]');
+      const list = group ? group.querySelector('.schema-inline-field-list') : null;
+      if (!list || !fieldTemplate) return;
+      const fragment = fieldTemplate.content.cloneNode(true);
+      const card = fragment.querySelector('.schema-inline-field-card');
+      if (!card) return;
+      applyFieldNames(card, prefix);
+      list.appendChild(fragment);
+      syncFieldGroup(group);
+      openFieldEditor(list.lastElementChild);
+    });
+  });
+
+  document.addEventListener('click', (event) => {
+    const fieldCard = event.target.closest('[data-field-row]');
+    if (
+      fieldCard &&
+      !event.target.closest('[data-edit-field-row]') &&
+      !event.target.closest('[data-remove-field-row]') &&
+      !event.target.closest('.drag-handle')
+    ) {
+      openFieldEditor(fieldCard);
+      return;
+    }
+
+    const editButton = event.target.closest('[data-edit-field-row]');
+    if (editButton) {
+      const card = editButton.closest('[data-field-row]');
+      if (!card) return;
+      openFieldEditor(card);
+      return;
+    }
+
+    const removeButton = event.target.closest('[data-remove-field-row]');
+    if (removeButton) {
+      event.preventDefault();
+      const card = removeButton.closest('.schema-inline-field-card');
+      if (!card) return;
+      if (getFieldValue(card, 'removable') !== '1') {
+        return;
+      }
+      if (!window.confirm('¿Seguro que quieres borrar este campo?')) {
+        return;
+      }
+      const list = card.parentElement;
+      const group = card.closest('[data-field-group]');
+      const form = card.closest('form');
+      rememberAdminSchemaOpenState(card);
+      card.remove();
+      if (list && !list.querySelector('[data-field-row]')) {
+        const prefix = group ? group.dataset.fieldGroup : '';
+        if (prefix && fieldTemplate) {
+          const fragment = fieldTemplate.content.cloneNode(true);
+          const nextCard = fragment.querySelector('.schema-inline-field-card');
+          if (nextCard) {
+            applyFieldNames(nextCard, prefix);
+            list.appendChild(fragment);
+          }
+        }
+      }
+      syncFieldGroup(group);
+      requestIntentFormSubmit(form, card);
+      return;
+    }
+
+    const domainEditButton = event.target.closest('[data-open-domain-edit]');
+    if (domainEditButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      document.getElementById('domain-modal-original-code').value = domainEditButton.dataset.domainCode || '';
+      document.getElementById('domain-modal-code').value = domainEditButton.dataset.domainCode || '';
+      document.getElementById('domain-modal-name').value = domainEditButton.dataset.domainName || '';
+      const editForm = domainModal?.querySelector('form[action="/admin/schema/domains/update"]');
+      if (editForm) {
+        markFormClean(editForm);
+      }
+      openSimpleModal(domainModal);
+      return;
+    }
+
+    const intentEditButton = event.target.closest('[data-open-intent-edit]');
+    if (intentEditButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      const intentItem = intentEditButton.closest('[data-schema-intent]');
+      const form = intentItem?.querySelector('.schema-intent-form');
+      if (!(form instanceof HTMLFormElement)) return;
+      activeIntentForm = form;
+      intentModalIntentType.value = form.querySelector('[data-intent-type-input]')?.value || '';
+      intentModalDisplayName.value = form.querySelector('[data-intent-display-name-input]')?.value || '';
+      markFormClean(intentModalForm);
+      openSimpleModal(intentModal);
+      return;
+    }
+
+    if (event.target.closest('[data-open-domain-create]')) {
+      openSimpleModal(domainCreateModal);
+      return;
+    }
+
+    const intentCreateButton = event.target.closest('[data-open-intent-create]');
+    if (intentCreateButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      const code = intentCreateButton.dataset.domainCode || '';
+      const name = intentCreateButton.dataset.domainName || code;
+      document.getElementById('intent-create-domain-code').value = code;
+      document.getElementById('intent-create-domain-label').textContent = `Nuevo intent_type dentro de ${name}.`;
+      openSimpleModal(intentCreateModal);
+      return;
+    }
+
+    if (event.target.closest('[data-domain-modal-close]')) {
+      closeSimpleModal(domainModal);
+      return;
+    }
+
+    if (event.target.closest('[data-domain-create-close]')) {
+      closeSimpleModal(domainCreateModal);
+      return;
+    }
+
+    if (event.target.closest('[data-intent-modal-close]')) {
+      closeSimpleModal(intentModal);
+      activeIntentForm = null;
+      return;
+    }
+
+    if (event.target.closest('[data-intent-create-close]')) {
+      closeSimpleModal(intentCreateModal);
+      return;
+    }
+
+    if (event.target.closest('[data-field-editor-close]')) {
+      closeSimpleModal(fieldEditorModal);
+      return;
+    }
+  });
+
+  document.addEventListener('change', (event) => {
+    const target = event.target;
+    if (target === fieldEditorType || target === fieldEditorRequiredMode) {
+      syncFieldEditorVisibility();
+      syncFieldEditorCheckoutOptions();
+      return;
+    }
+    if (target === fieldEditorWhenField || target === fieldEditorWhenOperator) {
+      syncConditionValueControl();
+      return;
+    }
+    if (target === fieldEditorCheckoutReference) {
+      fieldEditorCheckoutNote.hidden = Boolean(fieldEditorCheckoutReference.value);
+      fieldEditorCheckoutNote.textContent = fieldEditorCheckoutReference.value ? '' : 'Primero crea o marca otro campo de tipo CheckIn Date.';
+      return;
+    }
+    updateDirtyButtons(target.closest('form'));
+  });
+
+  document.addEventListener('input', (event) => {
+    const target = event.target;
+    if (target === fieldEditorName && fieldEditorType.value === 'CheckIn Date') {
+      syncFieldEditorCheckoutOptions();
+    }
+    updateDirtyButtons(target.closest('form'));
+  });
+
+  fieldEditorSave?.addEventListener('click', saveFieldEditor);
+
+  intentModalForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (!activeIntentForm) return;
+    const typeInput = activeIntentForm.querySelector('[data-intent-type-input]');
+    const displayInput = activeIntentForm.querySelector('[data-intent-display-name-input]');
+    const summaryName = activeIntentForm.closest('[data-schema-intent]')?.querySelector('[data-schema-intent-name]');
+    const summaryCode = activeIntentForm.closest('[data-schema-intent]')?.querySelector('[data-schema-intent-code]');
+    if (typeInput) typeInput.value = intentModalIntentType.value.trim();
+    if (displayInput) displayInput.value = intentModalDisplayName.value.trim();
+    if (summaryName) summaryName.textContent = intentModalDisplayName.value.trim();
+    if (summaryCode) summaryCode.textContent = intentModalIntentType.value.trim();
+    closeSimpleModal(intentModal);
+    requestIntentFormSubmit(activeIntentForm, activeIntentForm);
+    activeIntentForm = null;
+  });
+
+  document.querySelectorAll('.schema-intent-summary-actions').forEach((actions) => {
+    actions.addEventListener('click', (event) => {
+      event.stopPropagation();
+    });
+  });
+
+  document.querySelectorAll('.schema-editor-item > summary').forEach((summary) => {
+    summary.addEventListener('click', (event) => {
+      if (!suppressNextSummaryToggle) return;
+      event.preventDefault();
+      event.stopPropagation();
+      suppressNextSummaryToggle = false;
+    });
+  });
+
+  document.querySelectorAll('[data-intent-drag-handle], [data-field-drag-handle], .schema-domain-card > summary .drag-handle').forEach((handle) => {
+    handle.addEventListener('mousedown', (event) => {
+      event.stopPropagation();
+    });
+    handle.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+  });
+
+  document.addEventListener('dragstart', (event) => {
+    const intentHandle = event.target.closest('[data-intent-drag-handle]');
+    if (intentHandle) {
+      suppressNextSummaryToggle = true;
+      const intentCard = intentHandle.closest('[data-schema-intent]');
+      if (!intentCard) return;
+      draggedIntentCard = intentCard;
+      draggedIntentOriginalOrder = currentIntentOrderSignature(intentCard.dataset.schemaIntentDomain || '');
+      intentCard.classList.add('is-dragging');
+      event.dataTransfer.effectAllowed = 'move';
+      return;
+    }
+    const domainCard = event.target.closest('[data-schema-domain]');
+    if (domainCard && !event.target.closest('[data-field-row]')) {
+      suppressNextSummaryToggle = true;
+      draggedDomainCard = domainCard;
+      draggedDomainOriginalOrder = currentDomainOrderSignature();
+      domainCard.classList.add('is-dragging');
+      event.dataTransfer.effectAllowed = 'move';
+      return;
+    }
+    const handle = event.target.closest('[data-field-drag-handle]');
+    if (!handle) {
+      event.preventDefault();
+      return;
+    }
+    suppressNextSummaryToggle = true;
+    const card = event.target.closest('[data-field-row]');
+    if (!card) return;
+    draggedFieldHandle = handle;
+    draggedFieldRow = card;
+    card.classList.add('is-dragging');
+    event.dataTransfer.effectAllowed = 'move';
+  });
+
+  document.addEventListener('dragend', (event) => {
+    const domainCard = event.target.closest('[data-schema-domain]');
+    if (domainCard) {
+      domainCard.classList.remove('is-dragging');
+      if (draggedDomainCard && draggedDomainOriginalOrder && currentDomainOrderSignature() !== draggedDomainOriginalOrder) {
+        suppressNextSummaryToggle = true;
+        rememberAdminSchemaOpenState(draggedDomainCard);
+        submitDomainOrder();
+      }
+    }
+    const intentCard = event.target.closest('[data-schema-intent]');
+    if (intentCard) {
+      intentCard.classList.remove('is-dragging');
+      const domainCode = intentCard.dataset.schemaIntentDomain || '';
+      if (draggedIntentCard && draggedIntentOriginalOrder && domainCode && currentIntentOrderSignature(domainCode) !== draggedIntentOriginalOrder) {
+        suppressNextSummaryToggle = true;
+        rememberAdminSchemaOpenState(draggedIntentCard);
+        submitIntentOrder(domainCode);
+      }
+    }
+    const card = event.target.closest('[data-field-row]');
+    if (card) card.classList.remove('is-dragging');
+    document.querySelectorAll('[data-schema-domain].drag-over').forEach((item) => item.classList.remove('drag-over'));
+    document.querySelectorAll('[data-schema-intent].drag-over').forEach((item) => item.classList.remove('drag-over'));
+    document.querySelectorAll('[data-field-row].drag-over').forEach((item) => item.classList.remove('drag-over'));
+    draggedDomainCard = null;
+    draggedDomainOriginalOrder = '';
+    draggedIntentCard = null;
+    draggedIntentOriginalOrder = '';
+    draggedFieldRow = null;
+    draggedFieldHandle = null;
+  });
+
+  document.addEventListener('dragover', (event) => {
+    const targetDomainCard = event.target.closest('[data-schema-domain]');
+    if (draggedDomainCard && targetDomainCard && targetDomainCard !== draggedDomainCard && !event.target.closest('[data-field-row]')) {
+      event.preventDefault();
+      const targetRect = targetDomainCard.getBoundingClientRect();
+      const after = event.clientY > targetRect.top + targetRect.height / 2;
+      targetDomainCard.classList.add('drag-over');
+      if (after) {
+        targetDomainCard.after(draggedDomainCard);
+      } else {
+        targetDomainCard.before(draggedDomainCard);
+      }
+      return;
+    }
+    const targetIntentCard = event.target.closest('[data-schema-intent]');
+    if (draggedIntentCard && targetIntentCard && targetIntentCard !== draggedIntentCard && !event.target.closest('[data-field-row]')) {
+      const sameDomain = draggedIntentCard.dataset.schemaIntentDomain === targetIntentCard.dataset.schemaIntentDomain;
+      if (!sameDomain) return;
+      event.preventDefault();
+      const targetRect = targetIntentCard.getBoundingClientRect();
+      const after = event.clientY > targetRect.top + targetRect.height / 2;
+      targetIntentCard.classList.add('drag-over');
+      if (after) {
+        targetIntentCard.after(draggedIntentCard);
+      } else {
+        targetIntentCard.before(draggedIntentCard);
+      }
+      return;
+    }
+    const targetCard = event.target.closest('[data-field-row]');
+    if (!draggedFieldRow || !targetCard || targetCard === draggedFieldRow) return;
+    const sameGroup = draggedFieldRow.closest('[data-field-group]') === targetCard.closest('[data-field-group]');
+    if (!sameGroup) return;
+    const draggedBucket = fieldBucket(draggedFieldRow);
+    const targetBucket = fieldBucket(targetCard);
+    if (draggedBucket === 'required' && targetBucket !== 'required') return;
+    if (draggedBucket === 'conditional' && targetBucket !== 'conditional') return;
+    if (draggedBucket === 'optional' && targetBucket !== 'optional') return;
+    event.preventDefault();
+    const targetRect = targetCard.getBoundingClientRect();
+    const after = event.clientY > targetRect.top + targetRect.height / 2;
+    targetCard.classList.add('drag-over');
+    if (after) {
+      targetCard.after(draggedFieldRow);
+    } else {
+      targetCard.before(draggedFieldRow);
+    }
+  });
+
+  document.addEventListener('dragleave', (event) => {
+    const targetDomainCard = event.target.closest('[data-schema-domain]');
+    if (targetDomainCard) targetDomainCard.classList.remove('drag-over');
+    const targetIntentCard = event.target.closest('[data-schema-intent]');
+    if (targetIntentCard) targetIntentCard.classList.remove('drag-over');
+    const targetCard = event.target.closest('[data-field-row]');
+    if (targetCard) targetCard.classList.remove('drag-over');
+  });
+
+  document.addEventListener('drop', (event) => {
+    const targetDomainCard = event.target.closest('[data-schema-domain]');
+    if (draggedDomainCard && targetDomainCard) {
+      event.preventDefault();
+      targetDomainCard.classList.remove('drag-over');
+      return;
+    }
+    const targetIntentCard = event.target.closest('[data-schema-intent]');
+    if (draggedIntentCard && targetIntentCard) {
+      event.preventDefault();
+      targetIntentCard.classList.remove('drag-over');
+      return;
+    }
+    const targetCard = event.target.closest('[data-field-row]');
+    if (!draggedFieldRow || !targetCard) return;
+    event.preventDefault();
+    targetCard.classList.remove('drag-over');
+    const group = draggedFieldRow.closest('[data-field-group]');
+    syncFieldGroup(group);
+    requestIntentFormSubmit(draggedFieldRow.closest('form'), draggedFieldRow);
+  });
+
+  document.querySelectorAll('.schema-intent-form').forEach((form) => {
+    if (form.id !== 'intent-create-form') {
+      markFormClean(form);
+    }
+    form.addEventListener('submit', (event) => {
+      rememberAdminSchemaOpenState(form);
+      const rows = Array.from(form.querySelectorAll('[data-field-row]'));
+      for (const row of rows) {
+        if (!validateFieldRow(row)) {
+          event.preventDefault();
+          openFieldEditor(row);
+          return;
+        }
+      }
+    });
+  });
+
+  document.querySelectorAll('.schema-intent-form textarea[name="examples_text"]').forEach((textarea) => {
+    textarea.addEventListener('change', () => {
+      requestIntentFormSubmit(textarea.closest('form'), textarea);
+    });
+  });
+
+  document.querySelectorAll('.schema-inline-delete').forEach((form) => {
+    form.addEventListener('submit', (event) => {
+      rememberAdminSchemaOpenState(form);
+      const targetLabel = form.classList.contains('schema-domain-inline-delete') ? 'este dominio' : 'este intent_type';
+      if (!window.confirm(`¿Seguro que quieres borrar ${targetLabel}?`)) {
+        event.preventDefault();
+      }
+    });
+  });
+
+  document.querySelectorAll('[data-field-group]').forEach((group) => {
+    syncFieldGroup(group);
+  });
+
+  const domainEditForm = domainModal?.querySelector('form[action="/admin/schema/domains/update"]');
+  if (domainEditForm) {
+    markFormClean(domainEditForm);
+  }
+
+  const schemaSearchInput = document.querySelector('[data-schema-search-input]');
+  const schemaDomainCards = Array.from(document.querySelectorAll('[data-schema-domain]'));
+  let preSearchOpenState = null;
+
+  const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  const normalizeSearchText = (value) => (value || '').toLowerCase().trim();
+
+  const captureOpenState = () => ({
+    domains: schemaDomainCards
+      .filter((domainCard) => domainCard.open)
+      .map((domainCard) => domainCard.dataset.schemaDomain),
+    intents: Array.from(document.querySelectorAll('[data-schema-intent]'))
+      .filter((intentCard) => intentCard.open)
+      .map((intentCard) => intentCard.dataset.schemaIntent),
+  });
+
+  const restoreOpenState = (state) => {
+    if (!state) return;
+    const openDomains = new Set(state.domains || []);
+    const openIntents = new Set(state.intents || []);
+    schemaDomainCards.forEach((domainCard) => {
+      domainCard.open = openDomains.has(domainCard.dataset.schemaDomain);
+    });
+    document.querySelectorAll('[data-schema-intent]').forEach((intentCard) => {
+      intentCard.open = openIntents.has(intentCard.dataset.schemaIntent);
+    });
+  };
+
+  const markSearchMatch = (element, query) => {
+    if (!element) return false;
+    if (!element.dataset.originalText) {
+      element.dataset.originalText = element.textContent || '';
+    }
+    const originalText = element.dataset.originalText;
+    if (!query) {
+      element.innerHTML = originalText;
+      return false;
+    }
+    const regex = new RegExp(`(${escapeRegExp(query)})`, 'ig');
+    const hasMatch = regex.test(originalText);
+    regex.lastIndex = 0;
+    element.innerHTML = hasMatch ? originalText.replace(regex, '<mark class="schema-highlight">$1</mark>') : originalText;
+    return hasMatch;
+  };
+
+  const applySchemaSearch = () => {
+    const query = normalizeSearchText(schemaSearchInput?.value || '');
+    if (!query) {
+      schemaDomainCards.forEach((domainCard) => {
+        domainCard.hidden = false;
+        markSearchMatch(domainCard.querySelector('[data-schema-domain-name]'), '');
+        markSearchMatch(domainCard.querySelector('[data-schema-domain-code]'), '');
+        domainCard.querySelectorAll('[data-schema-intent]').forEach((intentCard) => {
+          intentCard.hidden = false;
+          markSearchMatch(intentCard.querySelector('[data-schema-intent-name]'), '');
+          markSearchMatch(intentCard.querySelector('[data-schema-intent-code]'), '');
+        });
+      });
+      restoreOpenState(preSearchOpenState);
+      preSearchOpenState = null;
+      return;
+    }
+
+    if (!preSearchOpenState) {
+      preSearchOpenState = captureOpenState();
+    }
+
+    schemaDomainCards.forEach((domainCard) => {
+      const domainNameMatch = markSearchMatch(domainCard.querySelector('[data-schema-domain-name]'), query);
+      const domainCodeMatch = markSearchMatch(domainCard.querySelector('[data-schema-domain-code]'), query);
+      let hasVisibleIntent = false;
+
+      domainCard.querySelectorAll('[data-schema-intent]').forEach((intentCard) => {
+        const intentNameMatch = markSearchMatch(intentCard.querySelector('[data-schema-intent-name]'), query);
+        const intentCodeMatch = markSearchMatch(intentCard.querySelector('[data-schema-intent-code]'), query);
+        const matches = intentNameMatch || intentCodeMatch;
+        intentCard.hidden = !matches;
+        intentCard.open = matches;
+        if (matches) {
+          hasVisibleIntent = true;
+        }
+      });
+
+      const domainMatches = domainNameMatch || domainCodeMatch;
+      const shouldShowDomain = domainMatches || hasVisibleIntent;
+      domainCard.hidden = !shouldShowDomain;
+      domainCard.open = shouldShowDomain;
+    });
+  };
+
+  schemaSearchInput?.addEventListener('input', applySchemaSearch);
+
+  restoreAdminSchemaOpenState();
+</script>
+{% endblock %}

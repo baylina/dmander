@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="section-head">
+  <div>
+    <h1>Utilidades internas</h1>
+    <p class="small-note">Estas páginas son solo para administración y depuración de la aplicación.</p>
+  </div>
+</section>
+
+<section class="admin-tools-grid">
+  {% for item in admin_tools %}
+    <article class="card admin-tool-card">
+      <div class="admin-tool-copy">
+        <h2>{{ item.title }}</h2>
+        <p>{{ item.description }}</p>
+      </div>
+      <a href="{{ item.href }}" class="button button-primary">Abrir</a>
+    </article>
+  {% endfor %}
+</section>
+{% endblock %}

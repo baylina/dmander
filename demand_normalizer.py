@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
 from field_normalizers import (
@@ -18,7 +19,7 @@ from field_specs import (
     is_number_field,
 )
 from intent_rules import apply_intent_rules
-from master_schema import MasterSchemaRegistry
+from master_schema import ALLOWED_LOCATION_MODES, MasterSchemaRegistry
 from models import DemandResult, LLMResponse
 from normalization_rules import (
     detect_country_city_mismatch,
@@ -46,6 +47,19 @@ CORE_ATTRIBUTE_KEYS = {
     "dates",
     "validation_issues",
 }
+
+
+def _schema_budget_mode(schema, known_fields: dict[str, Any] | None = None) -> str:
+    budget_required = schema.budget_required_for(known_fields)
+    if budget_required and schema.budget_fix_or_range == "range":
+        return "required_range"
+    if budget_required and schema.budget_fix_or_range == "fix":
+        return "required_fixed"
+    if (not budget_required) and schema.budget_fix_or_range == "range":
+        return "optional_range"
+    if (not budget_required) and schema.budget_fix_or_range == "fix":
+        return "optional_fixed"
+    return ""
 
 
 def merge_known_fields(*parts: Optional[dict[str, Any]]) -> dict[str, Any]:
@@ -114,7 +128,12 @@ def build_normalized_demand(
         budget_max=budget_max,
     )
 
-    blocking_fields = {issue.field_name for issue in validation_issues if issue.field_name in set(schema.required_fields) | {"location_value", "budget_max", "budget_min"}}
+    active_required = set(schema.active_required_fields(normalized_known))
+    blocking_fields = {
+        issue.field_name
+        for issue in validation_issues
+        if issue.field_name in active_required | {"location_value", "budget_max", "budget_min"}
+    }
     enough_information = not required_missing and not blocking_fields
 
     normalized_known = merge_known_fields(
@@ -126,7 +145,7 @@ def build_normalized_demand(
             "description": description,
             "location_mode": location_mode,
             "location_value": location_value,
-            "budget_mode": response.budget_mode or schema.budget_policy,
+            "budget_mode": response.budget_mode or _schema_budget_mode(schema, normalized_known),
             "budget_min": budget_min,
             "budget_max": budget_max,
             "urgency": urgency,
@@ -163,7 +182,7 @@ def build_normalized_demand(
         location_geojson=zone_fields["location_geojson"],
         location_json=zone_fields["location_json"],
         location=location_value,
-        budget_mode=response.budget_mode or schema.budget_policy,
+        budget_mode=response.budget_mode or _schema_budget_mode(schema),
         budget_min=budget_min,
         budget_max=budget_max,
         urgency=urgency,
@@ -213,7 +232,7 @@ def normalize_existing_demand_record(row: dict[str, Any], registry: MasterSchema
         description=attributes.get("description") or raw_text,
         location_mode="unspecified",
         location_value=row.get("location"),
-        budget_mode=schema.budget_policy,
+        budget_mode=_schema_budget_mode(schema, known_fields),
         budget_min=_to_float(row.get("budget_min")),
         budget_max=_to_float(row.get("budget_max")),
         urgency=row.get("urgency"),
@@ -240,21 +259,26 @@ def compute_required_missing(
     dynamic_required = dynamic_required_fields(schema.intent_domain, schema.intent_type, known_fields)
     missing = [
         field
-        for field in [*schema.required_fields, *dynamic_required]
+        for field in [*schema.active_required_fields(known_fields), *schema.conditional_dependency_fields(known_fields), *dynamic_required]
         if not _field_is_present(field, known_fields, location_value, budget_min, budget_max)
     ]
-    if schema.location_policy.get("required") and not location_value:
+    if schema.location_required_for(known_fields) and not location_value:
         if "location_value" not in missing and "location" not in missing:
             missing.append("location_value")
-    if schema.budget_policy in {"required_fixed", "required_range"} and budget_min is None and budget_max is None:
-        if "budget_max" not in missing and "budget_min" not in missing:
+    if schema.budget_required_for(known_fields) and schema.budget_fix_or_range == "range":
+        if budget_min is None and "budget_min" not in missing:
+            missing.append("budget_min")
+        if budget_max is None and "budget_max" not in missing:
+            missing.append("budget_max")
+    elif schema.budget_required_for(known_fields) and schema.budget_fix_or_range == "fix" and budget_max is None:
+        if "budget_max" not in missing:
             missing.append("budget_max")
     return _dedupe_preserving_order(missing)
 
 
 def _augment_inferred_known_fields(schema, raw_text: str, known_fields: dict[str, Any]) -> dict[str, Any]:
     inferred = dict(known_fields)
-    for field_name in list(schema.required_fields):
+    for field_name in list(schema.active_required_fields(inferred)):
         if _clean_value(inferred.get(field_name)) is not None:
             continue
         if is_date_field(field_name):
@@ -266,7 +290,38 @@ def _augment_inferred_known_fields(schema, raw_text: str, known_fields: dict[str
             people = _infer_people_from_text(raw_text)
             if people is not None:
                 inferred[field_name] = people
+    _apply_budget_inference_from_text(raw_text, inferred)
     return inferred
+
+
+def _apply_budget_inference_from_text(raw_text: str, inferred: dict[str, Any]) -> None:
+    if _clean_value(inferred.get("budget_max")) is None:
+        max_budget = _infer_budget_limit_from_text(raw_text)
+        if max_budget is not None:
+            inferred["budget_max"] = max_budget
+
+
+def _infer_budget_limit_from_text(raw_text: str) -> Optional[float]:
+    text = str(raw_text or "").strip().lower()
+    if not text:
+        return None
+    patterns = [
+        r"(?:por\s+menos\s+de|menos\s+de|máximo\s+de|maximo\s+de|hasta|tope\s+de)\s*(\d+(?:[.,]\d+)?)\s*(?:€|euros?|eur)?",
+        r"(\d+(?:[.,]\d+)?)\s*(?:€|euros?|eur)\s*(?:o\s+menos|máximo|maximo|como\s+máximo|de\s+tope)?",
+        r"<\s*(\d+(?:[.,]\d+)?)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if not match:
+            continue
+        raw = match.group(1).replace(",", ".")
+        try:
+            value = float(raw)
+        except ValueError:
+            continue
+        if value > 0:
+            return round(value, 2)
+    return None
 
 
 def _infer_people_from_text(raw_text: str) -> Optional[int]:
@@ -316,12 +371,15 @@ def compute_recommended_missing(
 ) -> list[str]:
     missing = [
         field
-        for field in schema.optional_fields
+        for field in schema.visible_optional_fields(known_fields)
         if not _field_is_present(field, known_fields, location_value, budget_min, budget_max)
     ]
-    if schema.location_policy.get("required") is False and not location_value:
-        missing.append("location_value")
-    if schema.budget_policy not in {"not_applicable"} and budget_min is None and budget_max is None:
+    if (not schema.budget_required_for(known_fields)) and schema.budget_fix_or_range == "range":
+        if budget_min is None:
+            missing.append("budget_min")
+        if budget_max is None:
+            missing.append("budget_max")
+    elif (not schema.budget_required_for(known_fields)) and schema.budget_fix_or_range == "fix" and budget_max is None:
         missing.append("budget_max")
     return _dedupe_preserving_order(missing)
 
@@ -350,7 +408,18 @@ def _normalize_fields(schema, merged_known: dict[str, Any], response: LLMRespons
     validation_issues: list[ValidationIssue] = []
     country_constraint = infer_country_constraint(raw_text, normalized_known)
 
-    budget_mode = response.budget_mode or schema.budget_policy
+    if response.budget_mode:
+        budget_mode = response.budget_mode
+    elif schema.budget_required_for(normalized_known) and schema.budget_fix_or_range == "range":
+        budget_mode = "required_range"
+    elif schema.budget_required_for(normalized_known) and schema.budget_fix_or_range == "fix":
+        budget_mode = "required_fixed"
+    elif schema.budget_fix_or_range == "range":
+        budget_mode = "optional_range"
+    elif schema.budget_fix_or_range == "fix":
+        budget_mode = "optional_fixed"
+    else:
+        budget_mode = ""
     normalized_known["budget_mode"] = budget_mode
     normalized_known["summary"] = summary
     normalized_known["description"] = description
@@ -469,8 +538,8 @@ def _normalize_fields(schema, merged_known: dict[str, Any], response: LLMRespons
             location_candidate = None
         location = normalize_location_value(
             raw_value=location_candidate,
-            allowed_modes=list(schema.location_policy.get("allowed", [])),
-            required=bool(schema.location_policy.get("required")),
+            allowed_modes=list(ALLOWED_LOCATION_MODES),
+            required=bool(schema.location_required_for(normalized_known)),
         )
         if location.issue:
             validation_issues.append(location.issue)

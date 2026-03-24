@@ -59,7 +59,15 @@ def parse_money_eur(value: Any, field_name: str) -> tuple[Optional[float], Optio
         )
 
     candidate = numeric_match[-1]
-    candidate = candidate.replace(".", "").replace(",", ".")
+    if "." in candidate and "," in candidate:
+        last_dot = candidate.rfind(".")
+        last_comma = candidate.rfind(",")
+        if last_dot > last_comma:
+            candidate = candidate.replace(",", "")
+        else:
+            candidate = candidate.replace(".", "").replace(",", ".")
+    elif "," in candidate:
+        candidate = candidate.replace(".", "").replace(",", ".")
     try:
         amount = float(candidate) * multiplier
     except ValueError:

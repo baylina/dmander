@@ -100,20 +100,20 @@ ADDRESS_HINTS = (
 
 
 def is_budget_field(field_name: str) -> bool:
-    return field_name in BUDGET_FIELDS
+    return str(field_name or "").strip().lower() in BUDGET_FIELDS
 
 
 def is_date_field(field_name: str) -> bool:
-    return field_name in DATE_FIELDS
+    return str(field_name or "").strip().lower() in DATE_FIELDS
 
 
 def is_location_field(field_name: str) -> bool:
-    return field_name in LOCATION_FIELDS
+    return str(field_name or "").strip().lower() in LOCATION_FIELDS
 
 
 def is_integer_field(field_name: str) -> bool:
-    return field_name in INTEGER_FIELDS
+    return str(field_name or "").strip().lower() in INTEGER_FIELDS
 
 
 def is_number_field(field_name: str) -> bool:
-    return field_name in NUMBER_FIELDS
+    return str(field_name or "").strip().lower() in NUMBER_FIELDS
