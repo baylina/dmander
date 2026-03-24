@@ -3578,20 +3578,6 @@
               }
             },
             {
-              "name": "budget_max",
-              "type": "Importe en Euros",
-              "description": "presupuesto máximo",
-              "required": "always",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
-              }
-            },
-            {
               "name": "vehicle_type_or_model",
               "type": "Texto",
               "description": "tipo o modelo de vehículo",
@@ -3841,20 +3827,6 @@
               "validation": {
                 "min": 1.0
               }
-            },
-            {
-              "name": "budget_max",
-              "type": "Importe en Euros",
-              "description": "presupuesto máximo",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
-              }
             }
           ],
           "examples": [
@@ -3915,20 +3887,6 @@
               "name": "budget_min",
               "type": "Importe en Euros",
               "description": "budget min",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
-              }
-            },
-            {
-              "name": "budget_max",
-              "type": "Importe en Euros",
-              "description": "presupuesto máximo",
               "required": "never",
               "when": {
                 "field": "",
@@ -4052,20 +4010,6 @@
               "validation": {
                 "min": 1.0
               }
-            },
-            {
-              "name": "budget_max",
-              "type": "Importe en Euros",
-              "description": "presupuesto máximo",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
-              }
             }
           ],
           "examples": [
@@ -4140,20 +4084,6 @@
               "name": "budget_min",
               "type": "Importe en Euros",
               "description": "budget min",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
-              }
-            },
-            {
-              "name": "budget_max",
-              "type": "Importe en Euros",
-              "description": "presupuesto máximo",
               "required": "never",
               "when": {
                 "field": "",
@@ -4261,20 +4191,6 @@
               "validation": {
                 "min": 1.0
               }
-            },
-            {
-              "name": "budget_max",
-              "type": "Importe en Euros",
-              "description": "presupuesto máximo",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
-              }
             }
           ],
           "examples": [
@@ -4335,20 +4251,6 @@
               "validation": {
                 "min_length": 1,
                 "max_length": 300
-              }
-            },
-            {
-              "name": "budget_max",
-              "type": "Importe en Euros",
-              "description": "presupuesto máximo",
-              "required": "always",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
               }
             },
             {
@@ -4435,20 +4337,6 @@
               }
             },
             {
-              "name": "budget_max",
-              "type": "Importe en Euros",
-              "description": "presupuesto máximo",
-              "required": "always",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
-              }
-            },
-            {
               "name": "condition",
               "type": "Texto",
               "description": "condition",
@@ -4515,20 +4403,6 @@
               "validation": {
                 "min_length": 1,
                 "max_length": 300
-              }
-            },
-            {
-              "name": "budget_max",
-              "type": "Importe en Euros",
-              "description": "presupuesto máximo",
-              "required": "always",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
               }
             },
             {
@@ -4615,20 +4489,6 @@
               }
             },
             {
-              "name": "budget_max",
-              "type": "Importe en Euros",
-              "description": "presupuesto máximo",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
-              }
-            },
-            {
               "name": "measures",
               "type": "Texto",
               "description": "measures",
@@ -4695,20 +4555,6 @@
               "validation": {
                 "min_length": 1,
                 "max_length": 300
-              }
-            },
-            {
-              "name": "budget_max",
-              "type": "Importe en Euros",
-              "description": "presupuesto máximo",
-              "required": "always",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
               }
             },
             {
@@ -5749,20 +5595,6 @@
               }
             },
             {
-              "name": "budget_max",
-              "type": "Importe en Euros",
-              "description": "presupuesto máximo",
-              "required": "always",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
-              }
-            },
-            {
               "name": "property_type",
               "type": "Texto",
               "description": "tipo de inmueble",
@@ -6016,20 +5848,6 @@
               }
             },
             {
-              "name": "budget_max",
-              "type": "Importe en Euros",
-              "description": "presupuesto máximo",
-              "required": "always",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
-              }
-            },
-            {
               "name": "property_type",
               "type": "Texto",
               "description": "tipo de inmueble",
@@ -6178,20 +5996,6 @@
               "validation": {
                 "min_length": 1,
                 "max_length": 300
-              }
-            },
-            {
-              "name": "budget_max",
-              "type": "Importe en Euros",
-              "description": "presupuesto máximo",
-              "required": "always",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
               }
             },
             {
@@ -9696,20 +9500,6 @@
                 "min_length": 1,
                 "max_length": 300
               }
-            },
-            {
-              "name": "budget_max",
-              "type": "Importe en Euros",
-              "description": "presupuesto máximo",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
-              }
             }
           ],
           "examples": [
@@ -9769,20 +9559,6 @@
               "name": "budget_min",
               "type": "Importe en Euros",
               "description": "budget min",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
-              }
-            },
-            {
-              "name": "budget_max",
-              "type": "Importe en Euros",
-              "description": "presupuesto máximo",
               "required": "never",
               "when": {
                 "field": "",
