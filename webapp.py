@@ -905,6 +905,8 @@ def build_app() -> FastAPI:
             control = entry.get("control", {})
             answer = submitted_answers.get(field_name)
             existing_value = state.known_fields.get(field_name)
+            if entry.get("category") == "optional" and not _has_content(answer):
+                continue
             option_error = _validate_control_answer(answer, control, field_name, state.known_fields, submitted_answers)
             if option_error:
                 field_errors[field_name] = option_error
@@ -1642,9 +1644,82 @@ def _render(request: Request, template_name: str, context: dict[str, Any]) -> HT
             "demand_wizard": wizard,
             "debug_normalization": _normalization_debug_enabled(),
             "notification_summary": notification_summary,
+            "demand_budget_display": _demand_budget_display,
             **context,
         },
     )
+
+
+def _format_eur_amount(value: Any) -> str:
+    if value in {None, ""}:
+        return ""
+    try:
+        amount = round(float(value), 2)
+    except (TypeError, ValueError):
+        return ""
+    if amount.is_integer():
+        whole = f"{int(amount):,}".replace(",", ".")
+        return f"{whole} €"
+    formatted = f"{amount:,.2f}"
+    formatted = formatted.replace(",", "_").replace(".", ",").replace("_", ".")
+    return f"{formatted} €"
+
+
+def _budget_unit_marketplace_label(intent_type: str) -> str:
+    schema = get_master_schema_registry().resolve_intent_schema(intent_type)
+    unit_map = {
+        "one-time": "",
+        "per hour": "por hora",
+        "per day": "por día",
+        "per night": "por noche",
+        "per season": "por sesión",
+        "weekly": "por semana",
+        "monthly": "al mes",
+        "anual": "al año",
+    }
+    return unit_map.get(schema.budget_unit or "", "")
+
+
+def _demand_budget_display(demand: Any) -> dict[str, Any]:
+    min_value = getattr(demand, "budget_min", None)
+    max_value = getattr(demand, "budget_max", None)
+    has_min = min_value is not None
+    has_max = max_value is not None
+    unit_label = _budget_unit_marketplace_label(getattr(demand, "intent_type", ""))
+    unit_suffix = f" · {unit_label}" if unit_label else ""
+    if has_min and has_max:
+        try:
+            min_amount = float(min_value)
+            max_amount = float(max_value)
+        except (TypeError, ValueError):
+            min_amount = None
+            max_amount = None
+        if min_amount is not None and max_amount is not None and max_amount < min_amount:
+            min_amount, max_amount = max_amount, min_amount
+        if min_amount is not None and max_amount is not None and abs(min_amount - max_amount) < 0.005:
+            return {
+                "main": _format_eur_amount(max_amount),
+                "meta": f"Precio orientativo{unit_suffix}",
+                "has_price": True,
+            }
+        return {
+            "main": f"{_format_eur_amount(min_amount)} - {_format_eur_amount(max_amount)}",
+            "meta": f"Rango de precios{unit_suffix}",
+            "has_price": True,
+        }
+    if has_max:
+        return {
+            "main": f"Hasta {_format_eur_amount(max_value)}",
+            "meta": f"Precio máximo{unit_suffix}",
+            "has_price": True,
+        }
+    if has_min:
+        return {
+            "main": f"Desde {_format_eur_amount(min_value)}",
+            "meta": f"Presupuesto orientativo{unit_suffix}",
+            "has_price": True,
+        }
+    return {"main": "Precio a concretar", "meta": "", "has_price": False}
 
 
 def _keyword_suggestions() -> list[str]:

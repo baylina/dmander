@@ -217,8 +217,15 @@
   {% for demand in demands %}
     {% set demand_text = demand.normalized_payload.raw_text or demand.attributes.get("description", demand.summary) %}
     {% set city_label = demand.location_display or demand.location or demand.location_label or "" %}
+    {% set budget_view = demand_budget_display(demand) %}
     <article class="card demand-feed-card" id="demand-{{ demand.id }}">
       <div class="demand-feed-main">
+        <div class="demand-feed-price{% if not budget_view.has_price %} is-empty{% endif %}">
+          <div class="demand-feed-price-main">{{ budget_view.main }}</div>
+          {% if budget_view.meta %}
+            <div class="demand-feed-price-meta">{{ budget_view.meta }}</div>
+          {% endif %}
+        </div>
         <div class="title-inline">
           <h3>{{ demand_text[:100] }}{% if demand_text|length > 100 %}...{% endif %}</h3>
           {% if debug_normalization %}

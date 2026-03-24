@@ -1115,8 +1115,8 @@
                 "value": ""
               },
               "validation": {
-                "min_length": 0,
-                "max_length": 300
+                "max_length": 300,
+                "min_length": 0
               }
             },
             {
@@ -1144,8 +1144,8 @@
                 "value": ""
               },
               "validation": {
-                "min_length": 0,
-                "max_length": 300
+                "max_length": 300,
+                "min_length": 0
               }
             },
             {
@@ -1159,8 +1159,8 @@
                 "value": ""
               },
               "validation": {
-                "min_length": 0,
-                "max_length": 300
+                "max_length": 300,
+                "min_length": 0
               }
             }
           ],
@@ -3524,134 +3524,11 @@
                 "max_length": 300,
                 "min_length": 0
               }
-            },
-            {
-              "name": "search_location",
-              "type": "Ubicacion",
-              "description": "ubicación de búsqueda",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {}
             }
           ],
           "examples": [
             "Quiero comprar un Tesla Model 3",
             "Busco coche familiar nuevo"
-          ]
-        },
-        {
-          "intent_domain": "automotive",
-          "intent_type": "used_car_purchase",
-          "display_name": "Compra de coche usado",
-          "fields": [
-            {
-              "name": "_location",
-              "type": "System Location",
-              "description": "Ubicación de la demanda",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {}
-            },
-            {
-              "name": "_budget",
-              "type": "System Budget",
-              "description": "Presupuesto de la demanda",
-              "required": "always",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "fix_or_range": "range",
-              "unit": "one-time",
-              "validation": {
-                "min": "",
-                "max": ""
-              }
-            },
-            {
-              "name": "vehicle_type_or_model",
-              "type": "Texto",
-              "description": "tipo o modelo de vehículo",
-              "required": "always",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min_length": 1,
-                "max_length": 300
-              }
-            },
-            {
-              "name": "search_location",
-              "type": "Ubicacion",
-              "description": "ubicación de búsqueda",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {}
-            },
-            {
-              "name": "fuel_type",
-              "type": "Texto",
-              "description": "fuel type",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "max_length": 300,
-                "min_length": 0
-              }
-            },
-            {
-              "name": "max_km",
-              "type": "Number Real",
-              "description": "max km",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
-              }
-            },
-            {
-              "name": "financing",
-              "type": "Texto",
-              "description": "financing",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "max_length": 300,
-                "min_length": 0
-              }
-            }
-          ],
-          "examples": [
-            "Busco SUV usado hasta 20.000 €",
-            "Quiero comprar Toyota híbrido cerca de Barcelona"
           ]
         },
         {
@@ -3743,6 +3620,118 @@
             "Necesito revisar frenos",
             "Avería de motor en Terrassa"
           ]
+        },
+        {
+          "intent_domain": "automotive",
+          "intent_type": "used_car_purchase",
+          "display_name": "Compra de coche usado",
+          "fields": [
+            {
+              "name": "_location",
+              "type": "System Location",
+              "description": "Ubicación de la demanda",
+              "required": "never",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "validation": {}
+            },
+            {
+              "name": "_budget",
+              "type": "System Budget",
+              "description": "Presupuesto de la demanda",
+              "required": "always",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "fix_or_range": "range",
+              "unit": "one-time",
+              "validation": {
+                "min": "",
+                "max": ""
+              }
+            },
+            {
+              "name": "vehicle_type_or_model",
+              "type": "Texto",
+              "description": "tipo o modelo de vehículo",
+              "required": "always",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "validation": {
+                "min_length": 1,
+                "max_length": 300
+              }
+            },
+            {
+              "name": "financing",
+              "type": "Texto",
+              "description": "financing",
+              "required": "never",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "validation": {
+                "min_length": 0,
+                "max_length": 300
+              }
+            },
+            {
+              "name": "fuel_type",
+              "type": "Texto",
+              "description": "fuel type",
+              "required": "never",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "validation": {
+                "min_length": 0,
+                "max_length": 300
+              }
+            },
+            {
+              "name": "max_km",
+              "type": "Numero Entero",
+              "description": "kilometros",
+              "required": "never",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "validation": {
+                "min": 0,
+                "max": 2000000
+              }
+            },
+            {
+              "name": "search_location",
+              "type": "Ubicacion",
+              "description": "ubicación de búsqueda",
+              "required": "never",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "validation": {}
+            }
+          ],
+          "examples": [
+            "Busco SUV usado hasta 20.000 €",
+            "Quiero comprar Toyota híbrido cerca de Barcelona"
+          ]
         }
       ]
     },
@@ -3813,20 +3802,6 @@
                 "max_length": 300,
                 "min_length": 0
               }
-            },
-            {
-              "name": "budget_min",
-              "type": "Importe en Euros",
-              "description": "budget min",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
-              }
             }
           ],
           "examples": [
@@ -3881,20 +3856,6 @@
               "validation": {
                 "min_length": 1,
                 "max_length": 300
-              }
-            },
-            {
-              "name": "budget_min",
-              "type": "Importe en Euros",
-              "description": "budget min",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
               }
             },
             {
@@ -3996,20 +3957,6 @@
                 "max_length": 300,
                 "min_length": 0
               }
-            },
-            {
-              "name": "budget_min",
-              "type": "Importe en Euros",
-              "description": "budget min",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
-              }
             }
           ],
           "examples": [
@@ -4070,20 +4017,6 @@
               "name": "size",
               "type": "Number Real",
               "description": "size",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
-              }
-            },
-            {
-              "name": "budget_min",
-              "type": "Importe en Euros",
-              "description": "budget min",
               "required": "never",
               "when": {
                 "field": "",
@@ -4176,20 +4109,6 @@
               },
               "validation": {
                 "min": 1
-              }
-            },
-            {
-              "name": "budget_min",
-              "type": "Importe en Euros",
-              "description": "budget min",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
               }
             }
           ],
@@ -4472,20 +4391,6 @@
               "validation": {
                 "min_length": 1,
                 "max_length": 300
-              }
-            },
-            {
-              "name": "budget_min",
-              "type": "Importe en Euros",
-              "description": "budget min",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
               }
             },
             {
@@ -7577,20 +7482,6 @@
                 "min_length": 1,
                 "max_length": 300
               }
-            },
-            {
-              "name": "budget_monthly",
-              "type": "Importe en Euros",
-              "description": "presupuesto mensual",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
-              }
             }
           ],
           "examples": [
@@ -7822,20 +7713,6 @@
               "validation": {
                 "max_length": 300,
                 "min_length": 0
-              }
-            },
-            {
-              "name": "budget_monthly",
-              "type": "Importe en Euros",
-              "description": "presupuesto mensual",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
               }
             },
             {
@@ -8206,20 +8083,6 @@
               "validation": {
                 "max_length": 300,
                 "min_length": 0
-              }
-            },
-            {
-              "name": "budget_annual",
-              "type": "Importe en Euros",
-              "description": "presupuesto anual",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
               }
             }
           ],
@@ -8952,20 +8815,6 @@
                 "max_length": 300,
                 "min_length": 0
               }
-            },
-            {
-              "name": "budget_monthly",
-              "type": "Importe en Euros",
-              "description": "presupuesto mensual",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
-              }
             }
           ],
           "examples": [
@@ -9261,20 +9110,6 @@
                 "min_length": 1,
                 "max_length": 300
               }
-            },
-            {
-              "name": "budget_annual",
-              "type": "Importe en Euros",
-              "description": "presupuesto anual",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
-              }
             }
           ],
           "examples": [
@@ -9553,20 +9388,6 @@
               "validation": {
                 "min_length": 1,
                 "max_length": 300
-              }
-            },
-            {
-              "name": "budget_min",
-              "type": "Importe en Euros",
-              "description": "budget min",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
               }
             },
             {

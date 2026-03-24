@@ -2407,6 +2407,35 @@ textarea {
   gap: 10px;
 }
 
+.demand-feed-price {
+  display: grid;
+  gap: 3px;
+  padding: 2px 0 1px;
+}
+
+.demand-feed-price-main {
+  font-size: 1.72rem;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: #0f172a;
+}
+
+.demand-feed-price-meta {
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.demand-feed-price.is-empty .demand-feed-price-main {
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--muted);
+}
+
 .demand-feed-meta {
   display: flex;
   gap: 14px;
@@ -2962,6 +2991,10 @@ body.has-zone-modal {
 @media (max-width: 640px) {
   .demand-cards-grid {
     grid-template-columns: 1fr;
+  }
+
+  .demand-feed-price-main {
+    font-size: 1.5rem;
   }
 
   .page-shell {
