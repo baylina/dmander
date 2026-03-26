@@ -10,38 +10,52 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
   <link rel="stylesheet" href="{{ request.url_for('static', path='css/app.css') }}">
 </head>
-<body>
+<body class="page-kind-{{ page_kind }}">
   <div class="page-shell">
-    <header class="topbar">
+    <header class="topbar topbar-{{ page_kind }}">
       <a href="/" class="brand">
         <img src="{{ request.url_for('static', path='img/logo.svg') }}" alt="dmander">
         <span>dmander</span>
       </a>
 
-      <nav class="topnav">
-        <a href="/">Ver todas</a>
+      <nav class="topnav topnav-primary" aria-label="Principal">
         {% if current_user %}
-          <a href="/my-demands" class="nav-with-badge">
-            <span>Mis Demandas</span>
-            <span class="badge nav-badge" id="nav-badge-demands" {% if not notification_summary.my_demands_unread %}hidden{% endif %}>{{ notification_summary.my_demands_unread }}</span>
+          <a href="/demands/new?fresh=1" class="{{ 'is-active' if active_nav == 'publish' else '' }}">Publicar</a>
+          <a href="/" class="{{ 'is-active' if active_nav == 'explore' else '' }}">Explorar</a>
+          <a href="/app/chats" class="nav-with-badge {{ 'is-active' if active_nav == 'app-chats' else '' }}">
+            <span>Mis chats</span>
+            {% set unread_total = notification_summary.my_demands_unread + notification_summary.my_offers_unread %}
+            <span class="badge nav-badge" id="nav-badge-total" {% if not unread_total %}hidden{% endif %}>{{ unread_total }}</span>
           </a>
-          <a href="/my-offers" class="nav-with-badge">
-            <span>Mis Ofertas</span>
-            <span class="badge nav-badge" id="nav-badge-offers" {% if not notification_summary.my_offers_unread %}hidden{% endif %}>{{ notification_summary.my_offers_unread }}</span>
-          </a>
-          <a href="/demands/new?fresh=1" class="button button-cta">+ Publica</a>
-          <details class="user-menu">
-            <summary>{{ current_user.full_name }}</summary>
-            <form action="/logout" method="post" class="user-menu-panel">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              <button class="menu-action" type="submit">Cerrar sesión</button>
-            </form>
-          </details>
         {% else %}
-          <a href="/login">Acceder</a>
-          <a href="/signup" class="button button-primary">Crear cuenta</a>
+          <a href="/" class="{{ 'is-active' if active_nav == 'explore' else '' }}">Explorar demandas</a>
+          <a href="/how-it-works" class="{{ 'is-active' if active_nav == 'how-it-works' else '' }}">Cómo funciona</a>
+          <a href="/demands/new?fresh=1" class="{{ 'is-active' if active_nav == 'publish' else '' }}">Publicar demanda</a>
         {% endif %}
       </nav>
+
+      <div class="topbar-actions">
+        {% if current_user %}
+          <details class="user-menu" id="user-menu">
+            <summary>{{ current_user.full_name }}</summary>
+            <div class="user-menu-panel">
+              <div class="user-menu-head">
+                <strong>{{ current_user.full_name }}</strong>
+                <button type="button" class="user-menu-close" data-user-menu-close aria-label="Cerrar menú">×</button>
+              </div>
+              <a class="menu-action" href="/app/chats">Mis chats</a>
+              <a class="menu-action" href="/app/filters">Mis filtros</a>
+              <form action="/logout" method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button class="menu-action" type="submit">Cerrar sesión</button>
+              </form>
+            </div>
+          </details>
+        {% else %}
+          <a href="/login" class="button button-ghost">Acceder</a>
+          <a href="/demands/new?fresh=1" class="button button-primary">Empezar gratis</a>
+        {% endif %}
+      </div>
     </header>
 
     {% if flash_messages %}
@@ -52,7 +66,7 @@
       </section>
     {% endif %}
 
-    <main>
+    <main class="page-main">
       {% block content %}{% endblock %}
     </main>
   </div>
@@ -64,7 +78,7 @@
         <div class="debug-json-head">
           <strong id="debug-json-title">Normalized demand JSON</strong>
           <div class="debug-json-actions">
-            <button type="button" class="debug-json-copy" id="debug-json-copy">Copiar</button>
+            <button type="button" class="debug-json-copy" id="debug-json-copy">Copiar JSON</button>
             <button type="button" class="debug-json-close" id="debug-json-close">Cerrar</button>
           </div>
         </div>
@@ -77,7 +91,7 @@
     <div class="live-toast" id="live-toast" hidden>
       <strong>Nueva respuesta</strong>
       <span id="live-toast-text"></span>
-      <a id="live-toast-link" href="/">Abrir</a>
+      <a id="live-toast-link" href="/app/chats">Abrir</a>
     </div>
     <script>
       (() => {
@@ -102,8 +116,7 @@
 
         window.addEventListener('load', restoreScroll);
 
-        const badgeDemands = document.getElementById('nav-badge-demands');
-        const badgeOffers = document.getElementById('nav-badge-offers');
+        const badgeTotal = document.getElementById('nav-badge-total');
         const toast = document.getElementById('live-toast');
         const toastText = document.getElementById('live-toast-text');
         const toastLink = document.getElementById('live-toast-link');
@@ -136,8 +149,7 @@
             const response = await fetch('/api/notifications', { headers: { 'Accept': 'application/json' }});
             if (!response.ok) return;
             const data = await response.json();
-            applyBadge(badgeDemands, data.my_demands_unread || 0);
-            applyBadge(badgeOffers, data.my_offers_unread || 0);
+            applyBadge(badgeTotal, (data.my_demands_unread || 0) + (data.my_offers_unread || 0));
 
             if (toast && firstRun) {
               toast.hidden = true;
@@ -160,6 +172,44 @@
     </script>
   {% endif %}
 
+  <script>
+    document.querySelectorAll('.js-busy-form').forEach((form) => {
+      form.addEventListener('submit', (event) => {
+        const button = event.submitter || form.querySelector('button[type="submit"]');
+        if (!button || button.disabled) return;
+        form.classList.add('is-submitting');
+        button.disabled = true;
+        button.classList.add('is-busy');
+        const label = button.querySelector('.button-label');
+        if (label && button.dataset.busyText) {
+          label.textContent = button.dataset.busyText;
+        }
+      });
+    });
+
+    (() => {
+      const userMenu = document.getElementById('user-menu');
+      if (!userMenu) return;
+      const closeUserMenu = () => {
+        userMenu.open = false;
+      };
+      document.addEventListener('click', (event) => {
+        if (!userMenu.open) return;
+        if (userMenu.contains(event.target)) return;
+        closeUserMenu();
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          closeUserMenu();
+        }
+      });
+      userMenu.querySelector('[data-user-menu-close]')?.addEventListener('click', (event) => {
+        event.preventDefault();
+        closeUserMenu();
+      });
+    })();
+  </script>
+
   {% if debug_normalization %}
     <script>
       (() => {
@@ -173,6 +223,9 @@
         const close = () => {
           modal.hidden = true;
           document.body.classList.remove('modal-open');
+          if (window.getSelection) {
+            window.getSelection().removeAllRanges();
+          }
         };
 
         const open = (payload, title = 'Normalized demand JSON') => {
@@ -206,13 +259,29 @@
           }
         });
 
+        contentEl.addEventListener('click', () => {
+          const selection = window.getSelection?.();
+          if (!selection) return;
+          const range = document.createRange();
+          range.selectNodeContents(contentEl);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        });
+
         closeEl?.addEventListener('click', close);
         copyEl?.addEventListener('click', async () => {
           try {
             await navigator.clipboard.writeText(contentEl.textContent || '');
-            copyEl.textContent = 'Copiado';
-            window.setTimeout(() => { copyEl.textContent = 'Copiar'; }, 1400);
+            copyEl.textContent = 'JSON copiado';
+            window.setTimeout(() => { copyEl.textContent = 'Copiar JSON'; }, 1400);
           } catch (_) {
+            const selection = window.getSelection?.();
+            if (selection) {
+              const range = document.createRange();
+              range.selectNodeContents(contentEl);
+              selection.removeAllRanges();
+              selection.addRange(range);
+            }
           }
         });
 

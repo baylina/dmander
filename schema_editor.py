@@ -560,9 +560,7 @@ def _normalize_fields_for_intent(item: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         seen.add(normalized["name"])
         normalized_fields.append(normalized)
-    system_entries = _system_field_entries_from_item(item, normalized_fields)
-    regular_fields = [field for field in normalized_fields if field["name"] not in {"_location", "_budget"}]
-    return [system_entries["_location"], system_entries["_budget"], *regular_fields]
+    return normalized_fields
     
 
 def _system_field_entries_from_item(item: dict[str, Any], normalized_fields: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -928,7 +926,7 @@ def _field_rows_from_entries(items: list[dict[str, Any]]) -> list[dict[str, Any]
                     "max_datetime": "",
                     "checkout_reference": "",
                     "is_system": True,
-                    "removable": False,
+                    "removable": True,
                     "budget_fix_or_range": "",
                     "budget_unit": "",
                 }
@@ -960,7 +958,7 @@ def _field_rows_from_entries(items: list[dict[str, Any]]) -> list[dict[str, Any]
                     "max_datetime": "",
                     "checkout_reference": "",
                     "is_system": True,
-                    "removable": False,
+                    "removable": True,
                     "budget_fix_or_range": str(item.get("fix_or_range") or ""),
                     "budget_unit": str(item.get("unit") or ""),
                 }

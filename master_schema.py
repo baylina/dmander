@@ -387,11 +387,15 @@ class IntentSchema:
     fields: tuple[FieldSpec, ...]
     location_policy: RequirementPolicy
     budget_policy: BudgetPolicy
+    has_location_field: bool
+    has_budget_field: bool
     examples: tuple[str, ...]
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "IntentSchema":
         raw_fields = [item for item in (data.get("fields") or []) if isinstance(item, dict) and str(item.get("name") or "").strip()]
+        has_location_field = any(_is_location_system_field(item) for item in raw_fields)
+        has_budget_field = any(_is_budget_system_field(item) for item in raw_fields)
         return cls(
             intent_domain=str(data.get("intent_domain") or "").strip(),
             intent_type=str(data.get("intent_type") or "").strip(),
@@ -399,6 +403,8 @@ class IntentSchema:
             fields=tuple(FieldSpec.from_raw(item) for item in raw_fields if not _is_system_field(item)),
             location_policy=_extract_location_policy(raw_fields, data),
             budget_policy=_extract_budget_policy(raw_fields, data),
+            has_location_field=has_location_field,
+            has_budget_field=has_budget_field,
             examples=tuple(data.get("examples") or []),
         )
 
@@ -433,7 +439,11 @@ class IntentSchema:
         return tuple(item.name for item in self.active_required_field_specs(known_fields))
 
     def visible_optional_field_specs(self, known_fields: dict[str, Any] | None = None) -> tuple[FieldSpec, ...]:
-        return tuple(item for item in self.fields if item.is_optional)
+        return tuple(
+            item
+            for item in self.fields
+            if item.is_optional and item.requirement_status(known_fields) != "active"
+        )
 
     def visible_optional_fields(self, known_fields: dict[str, Any] | None = None) -> tuple[str, ...]:
         return tuple(item.name for item in self.visible_optional_field_specs(known_fields))
@@ -540,6 +550,8 @@ class MasterSchemaRegistry:
             fields=tuple(),
             location_policy=RequirementPolicy.from_raw("never"),
             budget_policy=BudgetPolicy(required_mode="never", when_field="", when_operator="", when_values=tuple(), fix_or_range="", unit="", min_value="", max_value=""),
+            has_location_field=False,
+            has_budget_field=False,
             examples=tuple(),
         )
 
@@ -629,6 +641,18 @@ def _is_system_field(item: dict[str, Any]) -> bool:
     name = str(item.get("name") or "").strip()
     value_type = _normalize_field_value_type(item.get("type") or item.get("value_type") or "")
     return name in {"_location", "_budget"} or value_type in {"system_location", "system_budget"}
+
+
+def _is_location_system_field(item: dict[str, Any]) -> bool:
+    name = str(item.get("name") or "").strip()
+    value_type = _normalize_field_value_type(item.get("type") or item.get("value_type") or "")
+    return name == "_location" or value_type == "system_location"
+
+
+def _is_budget_system_field(item: dict[str, Any]) -> bool:
+    name = str(item.get("name") or "").strip()
+    value_type = _normalize_field_value_type(item.get("type") or item.get("value_type") or "")
+    return name == "_budget" or value_type == "system_budget"
 
 
 def _extract_location_policy(raw_fields: list[dict[str, Any]], data: dict[str, Any]) -> RequirementPolicy:

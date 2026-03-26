@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="section-head">
+  <div>
+    <p class="eyebrow">Área privada</p>
+    <h1>Mis filtros</h1>
+    <p class="section-note">Revisa y reutiliza tus filtros guardados para explorar demandas más rápido.</p>
+  </div>
+</section>
+
+<section class="activity-grid">
+  {% for item in saved_filters %}
+    <article class="card activity-card">
+      <div class="activity-card-top">
+        <span class="pill">Filtro</span>
+      </div>
+      <strong>{{ item.name }}</strong>
+      <p class="muted">{{ item.query_text or "Sin texto" }}</p>
+      <div class="activity-card-actions">
+        <a href="/?saved_filter_id={{ item.id }}" class="button button-primary">Ejecutar</a>
+      </div>
+    </article>
+  {% else %}
+    <article class="card empty-state">
+      <h3>No tienes filtros guardados.</h3>
+      <p class="muted">Guarda un filtro desde la portada para recuperarlo aquí cuando quieras.</p>
+    </article>
+  {% endfor %}
+</section>
+{% endblock %}

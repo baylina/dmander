@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="card">
+  <div class="empty-state">
+    <h1>Redirigiendo…</h1>
+    <p class="muted">Esta vista ya no se usa. Te llevamos a tus chats.</p>
+    <a href="/app/chats" class="button button-primary">Ir a mis chats</a>
+  </div>
+</section>
+
+<script>
+  window.location.replace('/app/chats');
+</script>
+{% endblock %}

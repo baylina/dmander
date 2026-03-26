@@ -1,89 +1,352 @@
 {% extends "base.html" %}
 
 {% block content %}
-<section class="detail-layout">
-  <article class="card detail-card">
-    <div class="card-topline">
-      <span class="pill">{{ demand.intent_type }}</span>
-      <span class="pill soft">{{ demand.offer_count }} o</span>
-    </div>
-    <h1>{{ demand.summary }}</h1>
-    <p class="lead">{{ demand.attributes.get("description", "") }}</p>
+{% set budget_view = demand_budget_display(demand) %}
+{% set demand_text = demand.normalized_payload.raw_text or demand.attributes.get("description", demand.summary) %}
+{% set has_geo_location = demand.location_json and (demand.location_json.geojson or demand.location_json.bbox or (demand.location_json.center and demand.location_json.center.lat is not none and demand.location_json.center.lon is not none)) %}
+<section class="detail-breadcrumb">
+  <a href="/" class="button button-ghost">&larr; Volver a explorar</a>
+</section>
 
-    <div class="detail-grid">
-      <div>
-        <span class="detail-label">Ubicación</span>
-        <strong>{{ demand.location or "Por concretar" }}</strong>
+<section class="detail-layout detail-layout-modern{% if current_user and demand.is_owner %} detail-layout-owner{% endif %}">
+  <article class="card detail-main-card">
+    <div class="detail-price-block{% if not budget_view.has_price %} is-empty{% endif %}">
+      <div class="detail-price-main">{{ budget_view.main }}</div>
+      {% if budget_view.meta %}
+        <div class="detail-price-meta">{{ budget_view.meta }}</div>
+      {% endif %}
+    </div>
+
+    <div class="detail-title-block">
+      <p class="eyebrow">
+        {% if demand.effective_status == "open" %}
+          Demanda activa
+        {% elif demand.effective_status == "paused" %}
+          Demanda pausada
+        {% elif demand.effective_status == "expired" %}
+          Demanda expirada
+        {% else %}
+          Demanda
+        {% endif %}
+      </p>
+      <h1 class="detail-description-title">{{ demand_text }}</h1>
+      {% if demand.location_display or demand.location_label or demand.location %}
+        <div class="detail-inline-meta">
+          <span class="location-pill detail-location-pill">
+            <span class="location-icon" aria-hidden="true"></span>
+            <span>{{ demand.location_display or demand.location_label or demand.location }}</span>
+            {% if has_geo_location %}
+              <button
+                type="button"
+                class="location-map-link"
+                data-detail-map-toggle="detail-demand-map"
+                aria-expanded="false"
+              >
+                Ver mapa
+              </button>
+            {% endif %}
+          </span>
+        </div>
+      {% endif %}
+    </div>
+
+    {% if has_geo_location %}
+      <div class="inline-location-map detail-map-shell" id="detail-demand-map" hidden>
+        <div
+          class="readonly-demand-map"
+          data-readonly-map="true"
+          data-zone='{{ demand.location_json | tojson }}'
+          data-label="{{ demand.location_display or demand.location_label or demand.location or '' }}"
+        ></div>
       </div>
-      <div>
-        <span class="detail-label">Caducidad</span>
-        <strong>{{ demand.expires_at.strftime("%d/%m/%Y %H:%M") if demand.expires_at else "Sin especificar" }}</strong>
-      </div>
-      <div>
-        <span class="detail-label">Presupuesto</span>
-        <strong>
-          {% if demand.budget_min or demand.budget_max %}
-            {{ demand.budget_min or "?" }} - {{ demand.budget_max or "?" }} €
-          {% else %}
-            Sin indicar
-          {% endif %}
-        </strong>
-      </div>
-      <div>
+    {% endif %}
+
+    {% if detail_entries %}
+      <section class="detail-attributes">
+        <h2>Preguntas y respuestas de la publicación</h2>
+        <div class="detail-attributes-grid">
+          {% for item in detail_entries %}
+            <div class="detail-attribute-item">
+              <span class="detail-label">{{ item.question }}</span>
+              <strong>{{ item.answer }}</strong>
+            </div>
+          {% endfor %}
+        </div>
+      </section>
+    {% endif %}
+
+    <div class="detail-grid detail-grid-modern">
+      <div class="detail-info-card">
         <span class="detail-label">Publicado por</span>
         <strong>{{ demand.owner_name }}</strong>
+        <span class="detail-card-meta">{{ demand.created_at.strftime("%d/%m/%Y %H:%M") if demand.created_at else "Sin fecha" }}</span>
+      </div>
+      <div class="detail-info-card">
+        <span class="detail-label">Ofertas recibidas</span>
+        <strong>{{ demand.offer_count }}</strong>
+      </div>
+      <div class="detail-info-card">
+        <span class="detail-label">Estado</span>
+        {% if current_user and demand.is_owner and demand.effective_status != "expired" %}
+          <form action="/demands/{{ demand.id }}/lifecycle" method="post" class="detail-status-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <select name="action" class="detail-status-select" data-detail-status-select>
+              {% if demand.effective_status == "open" %}
+                <option value="" selected>Activa</option>
+                <option value="pause">Pausada</option>
+                <option value="delete">Eliminada</option>
+              {% elif demand.effective_status == "paused" %}
+                <option value="reactivate">Activa</option>
+                <option value="" selected>Pausada</option>
+                <option value="delete">Eliminada</option>
+              {% else %}
+                <option value="" selected>{{ demand.effective_status }}</option>
+              {% endif %}
+            </select>
+          </form>
+        {% else %}
+          <strong>
+            {% if demand.effective_status == "open" %}
+              Activa
+            {% elif demand.effective_status == "paused" %}
+              Pausada
+            {% elif demand.effective_status == "expired" %}
+              Expirada
+            {% else %}
+              {{ demand.effective_status }}
+            {% endif %}
+          </strong>
+        {% endif %}
       </div>
     </div>
-  </article>
 
-  {% if current_user and demand.is_owner %}
-    <article class="card">
-      <p class="eyebrow">Ofertas recibidas</p>
-      <h2>Respuestas a esta d</h2>
-      <div class="list-stack">
-        {% for offer in offers %}
-          <div class="offer-card">
-            <div class="offer-header">
-              <strong>{{ offer.supplier_name }}</strong>
-              <span>{{ offer.created_at.strftime("%d/%m/%Y %H:%M") if offer.created_at else "" }}</span>
-            </div>
-            <p>{{ offer.message }}</p>
-            <p class="small-note">{{ offer.supplier_email }}</p>
-            <a href="/offers/{{ offer.id }}" class="button button-ghost">Abrir conversación</a>
+    {% if current_user and demand.is_owner %}
+      <section class="detail-owner-offers">
+        <h2>Ofertas recibidas</h2>
+        {% if demand.offer_count %}
+          <div class="detail-owner-offers-summary">
+            <p>Tienes {{ demand.offer_count }} oferta{{ '' if demand.offer_count == 1 else 's' }} recibida{{ '' if demand.offer_count == 1 else 's' }} para esta demanda.</p>
+            <a href="/app/chats?role=owner&demand_id={{ demand.id }}{% if owner_selected_offer_id %}&offer_id={{ owner_selected_offer_id }}{% endif %}" class="button button-primary">Ver ofertas y conversaciones</a>
           </div>
         {% else %}
           <div class="empty-inline">Todavía no has recibido ofertas para esta demanda.</div>
-        {% endfor %}
+        {% endif %}
+      </section>
+    {% endif %}
+  </article>
+
+  {% if not (current_user and demand.is_owner) %}
+  <aside class="card detail-side-card">
+    <div class="detail-side-owner">
+      <span class="detail-label">Conversación</span>
+      <strong>Habla directamente con quien ha publicado esta demanda</strong>
+      <p class="muted">Si encajas con la necesidad, responde y empieza a negociar por chat.</p>
+    </div>
+
+    {% if current_user %}
+      <div class="detail-side-stack">
+        {% if demand.viewer_has_offer %}
+          {% if existing_thread %}
+            <div class="thread-messages detail-thread-messages">
+              {% for message in existing_thread.messages %}
+                <div class="thread-message{% if message.sender_user_id == current_user.id %} mine{% endif %}">
+                  <div class="thread-meta">
+                    <strong>{{ message.sender_name }}</strong>
+                    <span>{{ message.created_at.strftime("%d/%m/%Y %H:%M") if message.created_at else "" }}</span>
+                  </div>
+                  <p>{{ message.body }}</p>
+                </div>
+              {% endfor %}
+            </div>
+            {% if existing_thread.can_reply %}
+              <form action="/offers/{{ existing_thread.id }}/messages" method="post" class="form-stack">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="redirect_to" value="/demands/{{ demand.id }}">
+                <label>
+                  <span>Tu mensaje</span>
+                  <textarea name="body" rows="4" placeholder="Escribe tu respuesta para continuar la conversación." required></textarea>
+                </label>
+                <button type="submit" class="button button-primary">Enviar mensaje</button>
+              </form>
+            {% else %}
+              <div class="empty-inline">
+                {% if existing_thread.effective_status == "paused" %}
+                  La demanda está pausada. Puedes consultar el histórico, pero no enviar nuevos mensajes.
+                {% else %}
+                  La demanda está expirada. Puedes consultar el histórico durante 7 días, pero no enviar nuevos mensajes.
+                {% endif %}
+              </div>
+            {% endif %}
+            <a href="/app/chats?role=supplier&offer_id={{ existing_thread.id }}" class="button button-ghost">Abrir en mis ofertas</a>
+          {% else %}
+            <a href="/app/chats?role=supplier&offer_id={{ demand.viewer_offer_id }}" class="button button-primary">Ir a la conversación</a>
+          {% endif %}
+        {% elif not demand.can_interact %}
+          <div class="empty-inline">
+            {% if demand.effective_status == "paused" %}
+              La demanda está pausada. Ahora mismo no admite nuevas respuestas.
+            {% else %}
+              La demanda está expirada. Ya no admite nuevas respuestas.
+            {% endif %}
+          </div>
+        {% else %}
+          <form action="/demands/{{ demand.id }}/offers" method="post" class="form-stack">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="redirect_to" value="/demands/{{ demand.id }}">
+            <label>
+              <span>Tu propuesta</span>
+              <textarea name="message" rows="6" placeholder="Explica brevemente qué ofreces, condiciones o disponibilidad." required></textarea>
+            </label>
+            <button type="submit" class="button button-primary">Responder demanda</button>
+          </form>
+        {% endif %}
       </div>
-    </article>
-  {% elif current_user %}
-    <article class="card">
-      <p class="eyebrow">Responder demanda</p>
-      <h2>Enviar una o</h2>
-      <form action="/demands/{{ demand.id }}/offers" method="post" class="form-stack">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <label>
-          <span>Tu propuesta</span>
-          <textarea name="message" rows="6" placeholder="Explica qué ofreces, condiciones, precio orientativo o cómo resolverías la necesidad." required></textarea>
-        </label>
-        <button type="submit" class="button button-primary">
-          {% if demand.viewer_has_offer %}Actualizar oferta{% else %}Enviar oferta{% endif %}
-        </button>
-      </form>
-      {% if demand.viewer_offer_id %}
-        <a href="/offers/{{ demand.viewer_offer_id }}" class="button button-ghost">Abrir conversación</a>
-      {% endif %}
-    </article>
-  {% else %}
-    <article class="card login-cta">
-      <p class="eyebrow">Acceso requerido</p>
-      <h2>Inicia sesión para responder</h2>
-      <p class="muted">Puedes entrar con email y contraseña o con una cuenta social configurada.</p>
-      <div class="hero-actions">
-        <a href="/login" class="button button-primary">Acceder</a>
+    {% else %}
+      <div class="detail-side-stack">
+        <p class="muted">Inicia sesión para responder y empezar a hablar directamente con el demandante.</p>
+        <a href="/login" class="button button-primary">Acceder para responder</a>
         <a href="/signup" class="button button-ghost">Crear cuenta</a>
       </div>
-    </article>
+    {% endif %}
+  </aside>
   {% endif %}
 </section>
+
+<script>
+  (() => {
+    const defaultBounds = [[27.5, -18.5], [43.9, 4.8]];
+
+    const ensureMap = (container) => {
+      if (!container || container.dataset.mapReady === 'true' || !window.L) return;
+      let zone = {};
+      try {
+        zone = JSON.parse(container.dataset.zone || '{}');
+      } catch (_) {
+        zone = {};
+      }
+      const map = L.map(container, {
+        zoomControl: true,
+        dragging: true,
+        scrollWheelZoom: false,
+        doubleClickZoom: false,
+        boxZoom: false,
+        keyboard: false,
+        touchZoom: true,
+      });
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "&copy; OpenStreetMap contributors",
+        maxZoom: 19,
+      }).addTo(map);
+
+      const center = zone.center || {};
+      const hasCenter = Number.isFinite(Number(center.lat)) && Number.isFinite(Number(center.lon));
+      let resetView = null;
+
+      if (zone.mode === 'area' && Array.isArray(zone.bbox) && zone.bbox.length === 4) {
+        const bounds = [
+          [Number(zone.bbox[1]), Number(zone.bbox[0])],
+          [Number(zone.bbox[3]), Number(zone.bbox[2])],
+        ];
+        const layer = L.rectangle(bounds, {
+          color: "#0f766e",
+          weight: 2,
+          fillColor: "rgba(15, 118, 110, 0.18)",
+          fillOpacity: 0.3,
+        }).addTo(map);
+        const layerBounds = layer.getBounds();
+        if (layerBounds.isValid()) {
+          map.fitBounds(layerBounds.pad(0.15));
+          resetView = { type: 'bounds', value: layerBounds.pad(0.15) };
+        }
+      } else if (hasCenter) {
+        const lat = Number(center.lat);
+        const lon = Number(center.lon);
+        const radiusKm = Number.isFinite(Number(zone.radius_km)) ? Number(zone.radius_km) : 10;
+        map.setView([lat, lon], radiusKm <= 5 ? 12 : 10);
+        resetView = { type: 'view', value: [[lat, lon], radiusKm <= 5 ? 12 : 10] };
+        L.marker([lat, lon]).addTo(map);
+        if (radiusKm > 0) {
+          L.circle([lat, lon], {
+            radius: radiusKm * 1000,
+            color: "#0f766e",
+            fillColor: "rgba(15, 118, 110, 0.18)",
+            fillOpacity: 0.35,
+            weight: 2,
+          }).addTo(map);
+        }
+      } else {
+        map.fitBounds(defaultBounds, { padding: [18, 18] });
+        resetView = { type: 'bounds', value: L.latLngBounds(defaultBounds).pad(0.0) };
+      }
+
+      container.dataset.mapReady = 'true';
+      container.__resetMapView = () => {
+        if (!resetView) return;
+        if (resetView.type === 'bounds') {
+          map.fitBounds(resetView.value);
+        } else if (resetView.type === 'view') {
+          map.setView(resetView.value[0], resetView.value[1]);
+        }
+        window.setTimeout(() => map.invalidateSize(), 40);
+      };
+
+      window.setTimeout(() => {
+        map.invalidateSize();
+        if (zone.mode === 'area') {
+          const bounds = map.getBounds();
+          if (!bounds.isValid()) {
+            map.fitBounds(defaultBounds, { padding: [18, 18] });
+          }
+        }
+      }, 80);
+    };
+
+    const bindMapToggle = () => {
+      if (!window.L) {
+        window.setTimeout(bindMapToggle, 120);
+        return;
+      }
+      const target = document.getElementById('detail-demand-map');
+      const toggle = document.querySelector('[data-detail-map-toggle]');
+      if (!target || !toggle || toggle.dataset.bound === 'true') return;
+      toggle.dataset.bound = 'true';
+      toggle.addEventListener('click', () => {
+        const willOpen = target.hidden;
+        target.hidden = !target.hidden;
+        toggle.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+        if (willOpen) {
+          const container = target.querySelector('[data-readonly-map="true"]');
+          ensureMap(container);
+          if (container?.__resetMapView) {
+            window.setTimeout(() => container.__resetMapView(), 50);
+          }
+        }
+      });
+    };
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', bindMapToggle);
+    } else {
+      bindMapToggle();
+    }
+  })();
+</script>
+<script>
+  (() => {
+    const statusSelect = document.querySelector('[data-detail-status-select]');
+    if (!statusSelect) return;
+    statusSelect.addEventListener('change', () => {
+      const form = statusSelect.closest('form');
+      if (!form || !statusSelect.value) {
+        statusSelect.value = '';
+        return;
+      }
+      if (statusSelect.value === 'delete' && !window.confirm('¿Seguro que quieres eliminar esta demanda?')) {
+        statusSelect.value = '';
+        return;
+      }
+      form.submit();
+    });
+  })();
+</script>
 {% endblock %}

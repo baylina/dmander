@@ -244,14 +244,23 @@
                   <input type="hidden" name="intent_domain" value="{{ domain.code }}">
                   <input type="hidden" name="intent_type" value="{{ item.intent_type }}" data-intent-type-input>
                   <input type="hidden" name="display_name" value="{{ item.display_name }}" data-intent-display-name-input>
+                  <textarea name="examples_text" hidden data-intent-examples-input>{% for example in item.examples %}{{ example }}{% if not loop.last %}
+{% endif %}{% endfor %}</textarea>
 
                   {{ field_rows(item.field_specs, field_type_catalog, false) }}
 
-                  <label class="search-field-stack">
-                    <span>Ejemplos, una línea por ejemplo</span>
-                    <textarea name="examples_text" rows="3">{% for example in item.examples %}{{ example }}{% if not loop.last %}
-{% endif %}{% endfor %}</textarea>
-                  </label>
+                  <div class="search-field-stack">
+                    <span>Ejemplos</span>
+                    <div class="schema-readonly-examples">
+                      {% if item.examples %}
+                        {% for example in item.examples %}
+                          <div class="schema-readonly-example" data-intent-example-line>{{ example }}</div>
+                        {% endfor %}
+                      {% else %}
+                        <span class="small-note" data-intent-example-empty>Sin ejemplos</span>
+                      {% endif %}
+                    </div>
+                  </div>
                 </form>
               </details>
             {% endfor %}
@@ -298,12 +307,20 @@
     <div class="filter-modal-head">
       <div>
         <strong>Editar intent_type</strong>
-        <span class="small-note">Puedes cambiar el código y el nombre visible del intent_type.</span>
+        <span class="small-note">Puedes cambiar dominio, código, nombre visible y ejemplos.</span>
       </div>
       <button type="button" class="filter-modal-close" data-intent-modal-close>Cerrar</button>
     </div>
     <div class="filter-modal-body">
       <form class="filter-modal-form" id="intent-modal-form">
+        <label class="search-field-stack">
+          <span>intent_domain</span>
+          <select name="intent_domain" id="intent-modal-domain" required>
+            {% for domain in domain_groups %}
+              <option value="{{ domain.code }}">{{ domain.name }} ({{ domain.code }})</option>
+            {% endfor %}
+          </select>
+        </label>
         <label class="search-field-stack">
           <span>intent_type</span>
           <input type="text" name="intent_type" id="intent-modal-intent-type" required>
@@ -311,6 +328,10 @@
         <label class="search-field-stack">
           <span>Nombre visible en español</span>
           <input type="text" name="display_name" id="intent-modal-display-name" required>
+        </label>
+        <label class="search-field-stack">
+          <span>Ejemplos, una línea por ejemplo</span>
+          <textarea name="examples_text" id="intent-modal-examples" rows="5"></textarea>
         </label>
         <div class="filter-modal-actions">
           <button type="button" class="button button-secondary" data-intent-modal-close>Cancelar</button>
@@ -615,8 +636,10 @@
   const domainModal = document.getElementById('domain-modal');
   const intentModal = document.getElementById('intent-modal');
   const intentModalForm = document.getElementById('intent-modal-form');
+  const intentModalDomain = document.getElementById('intent-modal-domain');
   const intentModalIntentType = document.getElementById('intent-modal-intent-type');
   const intentModalDisplayName = document.getElementById('intent-modal-display-name');
+  const intentModalExamples = document.getElementById('intent-modal-examples');
   const intentCreateModal = document.getElementById('intent-create-modal');
   const fieldEditorModal = document.getElementById('field-editor-modal');
   const fieldEditorName = document.getElementById('field-editor-name');
@@ -1432,8 +1455,10 @@
       const form = intentItem?.querySelector('.schema-intent-form');
       if (!(form instanceof HTMLFormElement)) return;
       activeIntentForm = form;
+      intentModalDomain.value = form.querySelector('input[name="intent_domain"]')?.value || '';
       intentModalIntentType.value = form.querySelector('[data-intent-type-input]')?.value || '';
       intentModalDisplayName.value = form.querySelector('[data-intent-display-name-input]')?.value || '';
+      intentModalExamples.value = form.querySelector('[data-intent-examples-input]')?.value || '';
       markFormClean(intentModalForm);
       openSimpleModal(intentModal);
       return;
@@ -1515,23 +1540,41 @@
   intentModalForm?.addEventListener('submit', (event) => {
     event.preventDefault();
     if (!activeIntentForm) return;
+    const domainInput = activeIntentForm.querySelector('input[name="intent_domain"]');
     const typeInput = activeIntentForm.querySelector('[data-intent-type-input]');
     const displayInput = activeIntentForm.querySelector('[data-intent-display-name-input]');
+    const examplesInput = activeIntentForm.querySelector('[data-intent-examples-input]');
     const summaryName = activeIntentForm.closest('[data-schema-intent]')?.querySelector('[data-schema-intent-name]');
     const summaryCode = activeIntentForm.closest('[data-schema-intent]')?.querySelector('[data-schema-intent-code]');
+    const examplesContainer = activeIntentForm.querySelector('.schema-readonly-examples');
+    const exampleLines = intentModalExamples.value.split('\n').map((line) => line.trim()).filter(Boolean);
+    if (domainInput) domainInput.value = intentModalDomain.value.trim();
     if (typeInput) typeInput.value = intentModalIntentType.value.trim();
     if (displayInput) displayInput.value = intentModalDisplayName.value.trim();
+    if (examplesInput) examplesInput.value = intentModalExamples.value;
     if (summaryName) summaryName.textContent = intentModalDisplayName.value.trim();
     if (summaryCode) summaryCode.textContent = intentModalIntentType.value.trim();
+    if (examplesContainer) {
+      examplesContainer.innerHTML = '';
+      if (exampleLines.length) {
+        exampleLines.forEach((line) => {
+          const row = document.createElement('div');
+          row.className = 'schema-readonly-example';
+          row.setAttribute('data-intent-example-line', '');
+          row.textContent = line;
+          examplesContainer.appendChild(row);
+        });
+      } else {
+        const empty = document.createElement('span');
+        empty.className = 'small-note';
+        empty.setAttribute('data-intent-example-empty', '');
+        empty.textContent = 'Sin ejemplos';
+        examplesContainer.appendChild(empty);
+      }
+    }
     closeSimpleModal(intentModal);
     requestIntentFormSubmit(activeIntentForm, activeIntentForm);
     activeIntentForm = null;
-  });
-
-  document.querySelectorAll('.schema-intent-summary-actions').forEach((actions) => {
-    actions.addEventListener('click', (event) => {
-      event.stopPropagation();
-    });
   });
 
   document.querySelectorAll('.schema-editor-item > summary').forEach((summary) => {
@@ -1837,5 +1880,22 @@
   schemaSearchInput?.addEventListener('input', applySchemaSearch);
 
   restoreAdminSchemaOpenState();
+
+  const intentTypeParam = new URLSearchParams(window.location.search).get('intent_type');
+  if (intentTypeParam) {
+    if (schemaSearchInput) {
+      schemaSearchInput.value = intentTypeParam;
+      applySchemaSearch();
+    }
+    const targetIntent = document.querySelector(`[data-schema-intent="${CSS.escape(intentTypeParam)}"]`);
+    if (targetIntent) {
+      const parentDomain = targetIntent.closest('[data-schema-domain]');
+      if (parentDomain) parentDomain.open = true;
+      targetIntent.open = true;
+      window.setTimeout(() => {
+        targetIntent.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 120);
+    }
+  }
 </script>
 {% endblock %}

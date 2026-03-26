@@ -124,110 +124,6 @@
         },
         {
           "intent_domain": "education",
-          "intent_type": "school_support",
-          "display_name": "Refuerzo escolar general",
-          "fields": [
-            {
-              "name": "_location",
-              "type": "System Location",
-              "description": "Ubicación de la demanda",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {}
-            },
-            {
-              "name": "_budget",
-              "type": "System Budget",
-              "description": "Presupuesto de la demanda",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "fix_or_range": "fix",
-              "unit": "per hour",
-              "validation": {
-                "min": "",
-                "max": ""
-              }
-            },
-            {
-              "name": "education_stage",
-              "type": "Texto",
-              "description": "etapa educativa",
-              "required": "always",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min_length": 1,
-                "max_length": 300
-              }
-            },
-            {
-              "name": "modality",
-              "type": "Lista de Valores",
-              "description": "modalidad",
-              "required": "always",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "options": [
-                  "Presencial",
-                  "Online",
-                  "Me da igual"
-                ],
-                "allow_custom": true
-              }
-            },
-            {
-              "name": "subjects",
-              "type": "Texto",
-              "description": "asignaturas",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "max_length": 300,
-                "min_length": 0
-              }
-            },
-            {
-              "name": "frequency",
-              "type": "Texto",
-              "description": "frecuencia",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "max_length": 300,
-                "min_length": 0
-              }
-            }
-          ],
-          "examples": [
-            "Busco refuerzo escolar para primaria",
-            "Necesito apoyo para varias asignaturas en bachillerato"
-          ]
-        },
-        {
-          "intent_domain": "education",
           "intent_type": "language_tutoring",
           "display_name": "Clases particulares de idiomas",
           "fields": [
@@ -577,6 +473,113 @@
           "examples": [
             "Busco profesor de piano para principiante",
             "Clases de canto online"
+          ]
+        },
+        {
+          "intent_domain": "education",
+          "intent_type": "school_support",
+          "display_name": "Refuerzo escolar general",
+          "fields": [
+            {
+              "name": "_location",
+              "type": "System Location",
+              "description": "Ubicación de la demanda",
+              "required": "never",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "validation": {}
+            },
+            {
+              "name": "_budget",
+              "type": "System Budget",
+              "description": "Presupuesto de la demanda",
+              "required": "never",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "fix_or_range": "fix",
+              "unit": "per hour",
+              "validation": {
+                "min": "",
+                "max": ""
+              }
+            },
+            {
+              "name": "education_stage",
+              "type": "Texto",
+              "description": "etapa educativa",
+              "required": "always",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "validation": {
+                "min_length": 1,
+                "max_length": 300
+              }
+            },
+            {
+              "name": "modality",
+              "type": "Lista de Valores",
+              "description": "modalidad",
+              "required": "always",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "validation": {
+                "options": [
+                  "Presencial",
+                  "Online",
+                  "Me da igual"
+                ],
+                "allow_custom": true
+              }
+            },
+            {
+              "name": "frequency",
+              "type": "Texto",
+              "description": "frecuencia",
+              "required": "never",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "validation": {
+                "min_length": 0,
+                "max_length": 300
+              }
+            },
+            {
+              "name": "subjects",
+              "type": "Texto",
+              "description": "asignaturas",
+              "required": "never",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "validation": {
+                "min_length": 0,
+                "max_length": 300
+              }
+            }
+          ],
+          "examples": [
+            "Busco refuerzo escolar para primaria",
+            "Necesito clases particulares de biologia para estudiante de la ESO",
+            "Necesito apoyo para varias asignaturas en bachillerato",
+            "Quiero clases particulares de física para 2º de bachillerato",
+            "Necesito apoyo de contabilidad para FP administrativo"
           ]
         }
       ]
@@ -3681,8 +3684,8 @@
                 "value": ""
               },
               "validation": {
-                "min_length": 0,
-                "max_length": 300
+                "max_length": 300,
+                "min_length": 0
               }
             },
             {
@@ -3696,8 +3699,8 @@
                 "value": ""
               },
               "validation": {
-                "min_length": 0,
-                "max_length": 300
+                "max_length": 300,
+                "min_length": 0
               }
             },
             {
@@ -3711,7 +3714,6 @@
                 "value": ""
               },
               "validation": {
-                "min": 0,
                 "max": 2000000
               }
             },

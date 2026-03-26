@@ -1,0 +1,514 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="chat-role-tabs chat-role-tabs-page" role="tablist" aria-label="Tipo de conversación">
+  <button type="button" class="chat-role-tab is-active" data-chat-role="owner">
+    <span class="chat-role-tab-main">Mis demandas</span>
+  </button>
+  <button type="button" class="chat-role-tab" data-chat-role="supplier">
+    <span class="chat-role-tab-main">Mis ofertas enviadas</span>
+  </button>
+</div>
+
+<section class="card chats-shell">
+  <div class="chats-layout-modern" id="chats-layout" data-chat-layout="owner">
+    <aside class="chat-column chat-demand-panel">
+      <div class="chat-list-head">
+        <strong id="chat-left-title" hidden></strong>
+        <label class="chat-inline-filter" id="chat-demand-filter-wrap">
+          <select id="chat-demand-status-filter">
+            <option value="active">Activas</option>
+            <option value="paused">Pausadas</option>
+            <option value="expired">Expiradas</option>
+            <option value="all">Todas</option>
+          </select>
+        </label>
+      </div>
+      <div class="chat-list-scroll" id="chat-left-list"></div>
+      <div class="chat-demand-summary-panel" id="chat-demand-summary-panel" hidden></div>
+    </aside>
+
+    <aside class="chat-column chat-conversation-panel" id="chat-conversation-panel">
+      <div class="chat-list-head">
+        <strong id="chat-middle-title">Personas interesadas (0)</strong>
+      </div>
+      <div class="chat-list-scroll" id="chat-middle-list"></div>
+    </aside>
+
+    <section class="chat-thread-panel">
+      <div class="chat-list-head chat-thread-head-spacer" aria-hidden="true"></div>
+      <div class="chat-thread-empty" id="chat-thread-empty">
+        <strong>Selecciona una conversación</strong>
+        <p class="muted">Aquí verás el historial y podrás seguir la negociación sin salir de la app.</p>
+      </div>
+
+      <div id="chat-thread-live" hidden>
+        <div class="chat-scroll" id="chat-thread-messages"></div>
+        <div class="chat-compose-note" id="chat-thread-status-note" hidden></div>
+        <form id="chat-thread-form" class="chat-compose modern-compose">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <textarea name="body" rows="3" placeholder="Escribe tu mensaje..." required></textarea>
+          <button type="submit" class="button button-primary chat-send-button">Enviar</button>
+        </form>
+      </div>
+    </section>
+  </div>
+</section>
+
+<script>
+  (() => {
+    const currentUserId = {{ current_user.id if current_user else 'null' }};
+    const initialOfferId = {{ initial_offer_id or 'null' }};
+    const initialDemandId = {{ initial_demand_id or 'null' }};
+    const initialChatRole = {{ initial_chat_role | tojson }};
+    const initialDemandStatusFilter = {{ initial_demand_status_filter | tojson }};
+    const initialOfferFilter = {{ initial_offer_filter | tojson }};
+    const csrfToken = {{ csrf_token | tojson }};
+
+    const layout = document.getElementById('chats-layout');
+    const leftTitle = document.getElementById('chat-left-title');
+    const leftList = document.getElementById('chat-left-list');
+    const demandFilterWrap = document.getElementById('chat-demand-filter-wrap');
+    const demandStatusFilter = document.getElementById('chat-demand-status-filter');
+    const demandSummaryPanel = document.getElementById('chat-demand-summary-panel');
+    const middlePanel = document.getElementById('chat-conversation-panel');
+    const middleTitle = document.getElementById('chat-middle-title');
+    const middleList = document.getElementById('chat-middle-list');
+    const threadEmpty = document.getElementById('chat-thread-empty');
+    const threadLive = document.getElementById('chat-thread-live');
+    const threadMessages = document.getElementById('chat-thread-messages');
+    const threadStatusNote = document.getElementById('chat-thread-status-note');
+    const threadForm = document.getElementById('chat-thread-form');
+    const roleTabs = document.querySelectorAll('[data-chat-role]');
+
+    let workspace = { my_demands_active: [], my_offers_active: [], my_demands_status_counts: {}, my_offers_status_counts: {} };
+    let activeRole = initialChatRole || 'owner';
+    let activeDemandStatusFilter = initialDemandStatusFilter || 'active';
+    let activeOfferFilter = initialOfferFilter || 'visible';
+    let selectedDemandId = initialDemandId;
+    let selectedOfferId = initialOfferId;
+
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (m) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+    const formatDate = (value) => value ? new Date(value).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+    const formatPrice = (item) => {
+      const min = item?.budget_min;
+      const max = item?.budget_max;
+      if ((min || min === 0) && (max || max === 0) && String(min) !== String(max)) return `${min} € - ${max} €`;
+      if (max || max === 0) return `Hasta ${max} €`;
+      if (min || min === 0) return `${min} €`;
+      return 'Precio a concretar';
+    };
+    const formatDemandStatus = (item) => {
+      const value = String(item?.effective_status || item?.status || '').toLowerCase();
+      if (value === 'paused') return 'Pausada';
+      if (value === 'expired') return 'Expirada';
+      if (value === 'deleted') return 'Eliminada';
+      return 'Activa';
+    };
+    const demandStatusClass = (item) => {
+      const value = String(item?.effective_status || item?.status || 'open').toLowerCase();
+      if (value === 'paused') return 'is-paused';
+      if (value === 'expired') return 'is-expired';
+      if (value === 'deleted') return 'is-deleted';
+      return 'is-open';
+    };
+    const formatExpiry = (item) => {
+      if (!item?.expires_at) return '';
+      return `Hasta ${formatDate(item.expires_at)}`;
+    };
+    const formatOfferVisibility = (item) => item?.supplier_hidden ? 'Oculta' : 'Visible';
+    const offerVisibilityClass = (item) => item?.supplier_hidden ? 'is-deleted' : 'is-open';
+    const statusCount = (key) => Number((workspace.my_demands_status_counts || {})[key] || 0);
+    const syncDemandStatusFilterOptions = () => {
+      if (!demandStatusFilter) return;
+      const labels = {
+        active: `Activas (${statusCount('active')})`,
+        paused: `Pausadas (${statusCount('paused')})`,
+        expired: `Expiradas (${statusCount('expired')})`,
+        all: `Todas (${statusCount('all')})`,
+      };
+      demandStatusFilter.innerHTML = `
+        <option value="active">${esc(labels.active)}</option>
+        <option value="paused">${esc(labels.paused)}</option>
+        <option value="expired">${esc(labels.expired)}</option>
+        <option value="all">${esc(labels.all)}</option>
+      `;
+      demandStatusFilter.value = activeDemandStatusFilter;
+    };
+    const offerStatusCount = (key) => Number((workspace.my_offers_status_counts || {})[key] || 0);
+    const syncOfferFilterOptions = () => {
+      if (!demandStatusFilter) return;
+      const labels = {
+        visible: `Visibles (${offerStatusCount('visible')})`,
+        pinned: `Pineadas (${offerStatusCount('pinned')})`,
+        hidden: `Ocultas (${offerStatusCount('hidden')})`,
+        all: `Todas (${offerStatusCount('all')})`,
+      };
+      demandStatusFilter.innerHTML = `
+        <option value="visible">${esc(labels.visible)}</option>
+        <option value="pinned">${esc(labels.pinned)}</option>
+        <option value="hidden">${esc(labels.hidden)}</option>
+        <option value="all">${esc(labels.all)}</option>
+      `;
+      demandStatusFilter.value = activeOfferFilter;
+    };
+
+    const ownerDemands = () => workspace.my_demands_active || [];
+    const supplierOffers = () => workspace.my_offers_active || [];
+
+    const selectedDemand = () => ownerDemands().find((item) => item.id === selectedDemandId) || null;
+    const selectedSupplierOffer = () => supplierOffers().find((item) => item.offer_id === selectedOfferId) || null;
+    const selectedOwnerConversation = () => {
+      const demand = selectedDemand();
+      if (!demand) return null;
+      return (demand.conversations || []).find((item) => item.offer_id === selectedOfferId) || null;
+    };
+
+    const ensureSelection = () => {
+      if (activeRole === 'owner') {
+        const demands = ownerDemands();
+        if (!demands.length) {
+          selectedDemandId = null;
+          selectedOfferId = null;
+          return;
+        }
+        if (!demands.some((item) => item.id === selectedDemandId)) {
+          selectedDemandId = demands[0].id;
+        }
+        const demand = demands.find((item) => item.id === selectedDemandId) || demands[0];
+        const conversations = demand?.conversations || [];
+        if (!conversations.length) {
+          selectedOfferId = null;
+          return;
+        }
+        if (!conversations.some((item) => item.offer_id === selectedOfferId)) {
+          selectedOfferId = conversations[0].offer_id;
+        }
+        return;
+      }
+
+      const offers = supplierOffers();
+      selectedDemandId = null;
+      if (!offers.length) {
+        selectedOfferId = null;
+        return;
+      }
+      if (!offers.some((item) => item.offer_id === selectedOfferId)) {
+        selectedOfferId = offers[0].offer_id;
+      }
+    };
+
+    const renderOwnerDemandList = () => {
+      const demands = ownerDemands();
+      leftTitle.textContent = '';
+      syncDemandStatusFilterOptions();
+      leftList.innerHTML = demands.map((item) => `
+        <article class="chat-thread-card chat-demand-item ${selectedDemandId === item.id ? 'is-active' : ''}">
+          <button type="button" class="chat-thread-row ${selectedDemandId === item.id ? 'is-active' : ''}" data-demand-id="${item.id}">
+            <div class="chat-thread-row-copy">
+              <strong>${item.is_pinned ? '📌 ' : ''}${esc(item.summary)}</strong>
+              <small>${esc(formatPrice(item))}</small>
+              <div class="chat-demand-status-row">
+                <span class="demand-status-pill ${demandStatusClass(item)}">${esc(formatDemandStatus(item))}</span>
+                ${formatExpiry(item) ? `<small>${esc(formatExpiry(item))}</small>` : ''}
+              </div>
+            </div>
+            <div class="chat-thread-row-meta">
+              ${item.has_unread ? '<span class="badge badge-hot">Nuevo</span>' : ''}
+              <small>${item.offer_count || 0} respuestas</small>
+            </div>
+          </button>
+          <div class="chat-thread-row-inline-action">
+              ${(item.can_pin ? `<button type="button" class="demand-icon-button demand-icon-button-pin ${item.is_pinned ? 'is-active' : ''}" data-demand-action="${item.is_pinned ? 'unpin' : 'pin'}" data-demand-action-id="${item.id}" title="${item.is_pinned ? 'Despinear demanda' : 'Pinear demanda'}" aria-label="${item.is_pinned ? 'Despinear demanda' : 'Pinear demanda'}">📌</button>` : '')}
+              ${(item.can_pause ? `<button type="button" class="demand-icon-button" data-demand-action="pause" data-demand-action-id="${item.id}" title="Pausar demanda" aria-label="Pausar demanda">⏸</button>` : '')}
+              ${(item.can_reactivate ? `<button type="button" class="demand-icon-button" data-demand-action="reactivate" data-demand-action-id="${item.id}" title="Despausar demanda" aria-label="Despausar demanda">▶</button>` : '')}
+              ${(item.can_delete ? `<button type="button" class="demand-icon-button is-danger" data-demand-action="delete" data-demand-action-id="${item.id}" title="Eliminar demanda" aria-label="Eliminar demanda">🗑</button>` : '')}
+              <a href="/demands/${item.id}${selectedDemandId === item.id && selectedOfferId ? `?offer_id=${selectedOfferId}` : ''}" class="button button-ghost button-small">Ver detalles</a>
+          </div>
+        </article>
+      `).join('') || '<div class="chat-empty"><p>No tienes demandas con respuesta todavía.</p></div>';
+      demandSummaryPanel.hidden = true;
+    };
+
+    const renderOwnerConversationList = () => {
+      const demand = selectedDemand();
+      const conversations = demand?.conversations || [];
+      middleTitle.textContent = demand ? `Personas interesadas (${conversations.length})` : 'Personas interesadas (0)';
+      middleList.innerHTML = conversations.map((item) => `
+        <article class="chat-thread-card chat-interest-item ${selectedOfferId === item.offer_id ? 'is-active' : ''}">
+          <button type="button" class="chat-thread-row ${selectedOfferId === item.offer_id ? 'is-active' : ''}" data-offer-id="${item.offer_id}">
+            <div class="chat-thread-row-copy">
+              <strong>${esc(item.supplier_name)}</strong>
+            </div>
+            <div class="chat-thread-row-meta">
+              ${item.unread_count ? `<span class="badge badge-hot">${item.unread_count}</span>` : ''}
+              <small>${formatDate(item.last_message_at || item.created_at)}</small>
+            </div>
+          </button>
+        </article>
+      `).join('') || '<div class="chat-empty"><p>Esta demanda todavía no tiene conversaciones.</p></div>';
+    };
+
+    const renderSupplierDemandPanel = () => {
+      leftTitle.textContent = '';
+      syncOfferFilterOptions();
+      const offers = supplierOffers();
+      leftList.innerHTML = offers.map((offer) => `
+        <article class="chat-thread-card chat-demand-item ${selectedOfferId === offer.offer_id ? 'is-active' : ''}">
+          <button type="button" class="chat-thread-row ${selectedOfferId === offer.offer_id ? 'is-active' : ''}" data-supplier-offer-id="${offer.offer_id}">
+            <div class="chat-thread-row-copy">
+              <strong>${offer.supplier_is_pinned ? '📌 ' : ''}${esc(offer.demand_summary)}</strong>
+              <span>Publicado por ${esc(offer.owner_name || 'Demandante')}</span>
+              <small>${esc(formatPrice(offer))}</small>
+              <div class="chat-demand-status-row">
+                <span class="demand-status-pill ${demandStatusClass(offer)}">${esc(formatDemandStatus(offer))}</span>
+                ${offer.demand_expires_at ? `<small>${esc(`Hasta ${formatDate(offer.demand_expires_at)}`)}</small>` : ''}
+              </div>
+            </div>
+            <div class="chat-thread-row-meta">
+              ${offer.unread_count ? `<span class="badge badge-hot">${offer.unread_count}</span>` : ''}
+              <small>${formatDate(offer.last_message_at || offer.created_at)}</small>
+            </div>
+          </button>
+          <div class="chat-thread-row-inline-action">
+            ${(offer.can_pin ? `<button type="button" class="demand-icon-button demand-icon-button-pin ${offer.supplier_is_pinned ? 'is-active' : ''}" data-offer-action="${offer.supplier_is_pinned ? 'unpin' : 'pin'}" data-offer-action-id="${offer.offer_id}" title="${offer.supplier_is_pinned ? 'Despinear demanda' : 'Pinear demanda'}" aria-label="${offer.supplier_is_pinned ? 'Despinear demanda' : 'Pinear demanda'}">📌</button>` : '')}
+            ${(offer.can_hide ? `<button type="button" class="demand-icon-button" data-offer-action="hide" data-offer-action-id="${offer.offer_id}" title="Ocultar demanda" aria-label="Ocultar demanda"><svg class="action-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.6-6 9.5-6 9.5 6 9.5 6-3.6 6-9.5 6-9.5-6-9.5-6Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4 20 20 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>` : '')}
+            ${(offer.can_unhide ? `<button type="button" class="demand-icon-button" data-offer-action="unhide" data-offer-action-id="${offer.offer_id}" title="Mostrar demanda" aria-label="Mostrar demanda"><svg class="action-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.6-6 9.5-6 9.5 6 9.5 6-3.6 6-9.5 6-9.5-6-9.5-6Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.8" fill="none" stroke="currentColor" stroke-width="1.8"/></svg></button>` : '')}
+            <a href="/demands/${offer.demand_id}" class="button button-ghost button-small">Ver detalles</a>
+          </div>
+        </article>
+      `).join('') || '<div class="chat-empty"><p>No tienes demandas en este filtro.</p></div>';
+      demandSummaryPanel.hidden = true;
+    };
+
+    const renderSupplierMode = () => {
+      middlePanel.hidden = true;
+      if (demandFilterWrap) demandFilterWrap.hidden = false;
+      layout.dataset.chatLayout = 'supplier';
+      renderSupplierDemandPanel();
+    };
+
+    const renderOwnerMode = () => {
+      middlePanel.hidden = false;
+      if (demandFilterWrap) demandFilterWrap.hidden = false;
+      layout.dataset.chatLayout = 'owner';
+      renderOwnerDemandList();
+      renderOwnerConversationList();
+    };
+
+    const openThread = async (offerId) => {
+      const response = await fetch(`/api/offers/${offerId}/thread`, { headers: { Accept: 'application/json' }});
+      if (!response.ok) return null;
+      return response.json();
+    };
+
+    const renderThread = async () => {
+      if (!selectedOfferId) {
+        threadEmpty.hidden = false;
+        threadLive.hidden = true;
+        return;
+      }
+      const thread = await openThread(selectedOfferId);
+      if (!thread) {
+        threadEmpty.hidden = false;
+        threadLive.hidden = true;
+        return;
+      }
+      threadEmpty.hidden = true;
+      threadLive.hidden = false;
+      threadMessages.innerHTML = (thread.messages || []).map((message) => `
+        <div class="thread-message ${message.sender_user_id === currentUserId ? 'mine' : ''}">
+          <div class="thread-meta"><strong>${esc(message.sender_name)}</strong><span>${formatDate(message.created_at)}</span></div>
+          <p>${esc(message.body)}</p>
+        </div>
+      `).join('');
+      threadForm.dataset.offerId = thread.id;
+      const textarea = threadForm.querySelector('textarea[name="body"]');
+      const submitButton = threadForm.querySelector('button[type="submit"]');
+      const canReply = !!thread.can_reply;
+      threadStatusNote.hidden = true;
+      threadStatusNote.textContent = '';
+      if (textarea) {
+        textarea.disabled = !canReply;
+        textarea.placeholder = canReply
+          ? 'Escribe tu mensaje...'
+          : (String(thread.effective_status || '') === 'paused'
+              ? 'La demanda está pausada. La conversación queda congelada.'
+              : 'La demanda está expirada. Ya no se pueden enviar mensajes.');
+      }
+      if (submitButton) {
+        submitButton.disabled = !canReply;
+      }
+      if (!canReply) {
+        threadForm.hidden = true;
+        threadStatusNote.hidden = false;
+        threadStatusNote.textContent = String(thread.effective_status || '') === 'paused'
+          ? 'La demanda está pausada. Puedes consultar el histórico, pero no enviar nuevos mensajes.'
+          : 'La demanda está expirada. Puedes consultar el histórico durante 7 días, pero no enviar nuevos mensajes.';
+      } else {
+        threadForm.hidden = false;
+      }
+      threadMessages.scrollTop = threadMessages.scrollHeight;
+    };
+
+    const renderWorkspace = async () => {
+      ensureSelection();
+      if (activeRole === 'owner') {
+        renderOwnerMode();
+      } else {
+        renderSupplierMode();
+      }
+      await renderThread();
+      roleTabs.forEach((button) => button.classList.toggle('is-active', button.dataset.chatRole === activeRole));
+    };
+
+    const fetchWorkspace = async () => {
+      const response = await fetch(`/api/workspace?demand_status=${encodeURIComponent(activeDemandStatusFilter)}&offer_filter=${encodeURIComponent(activeOfferFilter)}`, { headers: { Accept: 'application/json' }});
+      if (!response.ok) return;
+      workspace = await response.json();
+
+      if (initialOfferId && activeRole === 'owner') {
+        for (const demand of ownerDemands()) {
+          if ((demand.conversations || []).some((item) => item.offer_id === initialOfferId)) {
+            selectedDemandId = demand.id;
+            selectedOfferId = initialOfferId;
+            break;
+          }
+        }
+      }
+
+      const ownerCount = ownerDemands().length;
+      const supplierCount = supplierOffers().length;
+      if (activeRole === 'owner' && !ownerCount && supplierCount) activeRole = 'supplier';
+      if (activeRole === 'supplier' && !supplierCount && ownerCount) activeRole = 'owner';
+      await renderWorkspace();
+    };
+
+    roleTabs.forEach((button) => {
+      button.addEventListener('click', async () => {
+        activeRole = button.dataset.chatRole;
+        await renderWorkspace();
+      });
+    });
+
+    demandStatusFilter?.addEventListener('change', async () => {
+      if (activeRole === 'owner') {
+        activeDemandStatusFilter = demandStatusFilter.value || 'active';
+      } else {
+        activeOfferFilter = demandStatusFilter.value || 'visible';
+      }
+      selectedDemandId = null;
+      selectedOfferId = null;
+      await fetchWorkspace();
+    });
+
+    leftList.addEventListener('click', async (event) => {
+      const offerActionButton = event.target.closest('[data-offer-action]');
+      if (offerActionButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        const action = offerActionButton.dataset.offerAction;
+        const offerId = Number(offerActionButton.dataset.offerActionId);
+        if (!action || !offerId) return;
+        const body = new FormData();
+        body.append('csrf_token', csrfToken);
+        body.append('action', action);
+        body.append('demand_status', activeDemandStatusFilter);
+        body.append('offer_filter', activeOfferFilter);
+        const response = await fetch(`/api/offers/${offerId}/workspace-action`, {
+          method: 'POST',
+          body,
+          headers: { Accept: 'application/json' },
+        });
+        if (!response.ok) return;
+        workspace = await response.json();
+        if (selectedOfferId === offerId && action === 'hide' && activeOfferFilter !== 'hidden' && activeOfferFilter !== 'all') {
+          selectedOfferId = null;
+        }
+        if (selectedOfferId === offerId && action === 'unhide' && activeOfferFilter === 'hidden') {
+          selectedOfferId = null;
+        }
+        await renderWorkspace();
+        return;
+      }
+      const actionButton = event.target.closest('[data-demand-action]');
+      if (actionButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        const action = actionButton.dataset.demandAction;
+        const demandId = Number(actionButton.dataset.demandActionId);
+        if (!action || !demandId) return;
+        if (action === 'delete' && !window.confirm('¿Seguro que quieres eliminar esta demanda?')) {
+          return;
+        }
+        const body = new FormData();
+        body.append('csrf_token', csrfToken);
+        body.append('action', action);
+        body.append('demand_status', activeDemandStatusFilter);
+        const response = await fetch(`/api/demands/${demandId}/lifecycle`, {
+          method: 'POST',
+          body,
+          headers: { Accept: 'application/json' },
+        });
+        if (!response.ok) return;
+        workspace = await response.json();
+        if (selectedDemandId === demandId && action === 'delete' && activeDemandStatusFilter !== 'deleted' && activeDemandStatusFilter !== 'all') {
+          selectedDemandId = null;
+          selectedOfferId = null;
+        }
+        if (selectedDemandId === demandId && action === 'pause' && activeDemandStatusFilter === 'active') {
+          selectedDemandId = null;
+          selectedOfferId = null;
+        }
+        if (selectedDemandId === demandId && action === 'reactivate' && activeDemandStatusFilter === 'paused') {
+          selectedDemandId = null;
+          selectedOfferId = null;
+        }
+        await renderWorkspace();
+        return;
+      }
+      const demandButton = event.target.closest('[data-demand-id]');
+      if (demandButton) {
+        selectedDemandId = Number(demandButton.dataset.demandId);
+        if (activeRole === 'owner') {
+          const demand = selectedDemand();
+          selectedOfferId = demand?.conversations?.[0]?.offer_id || null;
+        } else {
+          selectedOfferId = Number(demandButton.dataset.offerId);
+        }
+        await renderWorkspace();
+        return;
+      }
+      const supplierDemandButton = event.target.closest('[data-supplier-offer-id]');
+      if (supplierDemandButton) {
+        selectedOfferId = Number(supplierDemandButton.dataset.supplierOfferId);
+        await renderWorkspace();
+      }
+    });
+
+    middleList.addEventListener('click', async (event) => {
+      const offerButton = event.target.closest('[data-offer-id]');
+      if (!offerButton) return;
+      selectedOfferId = Number(offerButton.dataset.offerId);
+      await renderWorkspace();
+    });
+
+    threadForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const offerId = threadForm.dataset.offerId;
+      if (!offerId) return;
+      const response = await fetch(`/api/offers/${offerId}/messages`, {
+        method: 'POST',
+        body: new FormData(threadForm),
+        headers: { Accept: 'application/json' },
+      });
+      if (!response.ok) return;
+      threadForm.reset();
+      await fetchWorkspace();
+    });
+
+    fetchWorkspace();
+    window.setInterval(fetchWorkspace, 8000);
+  })();
+</script>
+{% endblock %}

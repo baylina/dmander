@@ -301,6 +301,55 @@ def _apply_budget_inference_from_text(raw_text: str, inferred: dict[str, Any]) -
             inferred["budget_max"] = max_budget
 
 
+def _apply_modality_inference_from_context(schema, raw_text: str, normalized_known: dict[str, Any]) -> None:
+    if _clean_value(normalized_known.get("modality")) is not None:
+        return
+    if not any(field.name == "modality" for field in schema.fields):
+        return
+
+    lowered = (
+        str(raw_text or "")
+        .lower()
+        .replace("á", "a")
+        .replace("é", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ú", "u")
+    )
+
+    if schema.intent_domain != "education" and schema.intent_type not in {
+        "language_tutoring",
+        "math_tutoring",
+        "school_support",
+        "music_training",
+        "exam_prep",
+    }:
+        return
+
+    if any(token in lowered for token in ("online", "on line", "a distancia", "por zoom", "videollamada", "virtual", "remota", "remoto")):
+        normalized_known["modality"] = "online"
+        return
+
+    if any(token in lowered for token in ("presencial", "en persona", "a domicilio")):
+        normalized_known["modality"] = "presencial"
+        return
+
+    location_hint = first_present(
+        normalized_known.get("location_value"),
+        normalized_known.get("location"),
+        normalized_known.get("city_or_area"),
+        normalized_known.get("search_location"),
+        normalized_known.get("location_city"),
+        normalized_known.get("location_area"),
+    )
+    lesson_hint = any(
+        token in lowered
+        for token in ("clases", "clase particular", "clases particulares", "profesor", "profesora", "academia", "refuerzo")
+    )
+    if location_hint and lesson_hint:
+        normalized_known["modality"] = "presencial"
+
+
 def _infer_budget_limit_from_text(raw_text: str) -> Optional[float]:
     text = str(raw_text or "").strip().lower()
     if not text:
@@ -572,6 +621,8 @@ def _normalize_fields(schema, merged_known: dict[str, Any], response: LLMRespons
             structured.pop("area", None)
             structured.pop("address", None)
             normalized_attributes["location_structured"] = structured
+
+    _apply_modality_inference_from_context(schema, raw_text, normalized_known)
 
     normalized_dates = dict(normalized_known.get("dates") or {})
     for field_name in DATE_FIELDS:

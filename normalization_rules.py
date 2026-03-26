@@ -159,6 +159,11 @@ FIELD_PROMPTS = {
         "placeholder": "Ej.: 2, 4, 6...",
         "examples": ["2", "4", "6"],
     },
+    "student_age": {
+        "question": "¿Qué edad tiene el estudiante?",
+        "placeholder": "Ej.: 16, 17, 18...",
+        "examples": ["16", "17", "18"],
+    },
     "rooms": {
         "question": "¿Cuántas habitaciones necesitas?",
         "placeholder": "Ej.: 1, 2, 3...",
@@ -284,6 +289,7 @@ FIELD_LABELS = {
     "checkin": "fecha de entrada",
     "checkout": "fecha de salida",
     "people": "personas",
+    "student_age": "edad del estudiante",
     "rooms": "habitaciones",
     "stars": "estrellas",
     "size": "talla",

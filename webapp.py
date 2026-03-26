@@ -16,6 +16,7 @@ import os
 import secrets
 import json
 import re
+from urllib.parse import quote
 from urllib.parse import urlencode
 from urllib.request import Request as UrlRequest, urlopen
 from typing import Any, Optional
@@ -57,6 +58,8 @@ from database import (
     save_demand_wizard as save_demand_wizard_record,
     save_filter,
     update_filter,
+    update_supplier_offer_workspace,
+    update_web_demand_lifecycle,
     update_web_demand_from_agent,
 )
 from demand_normalizer import build_normalized_demand, merge_known_fields
@@ -300,7 +303,9 @@ def build_app() -> FastAPI:
             "home.html",
             {
                 "demands": demands,
-                "title": "Ver todas",
+                "title": "Explorar demandas",
+                "active_nav": "explore",
+                "page_kind": "public",
                 "search_filters": {
                     "q": q,
                     "location": location,
@@ -338,7 +343,7 @@ def build_app() -> FastAPI:
 
     @app.get("/login", response_class=HTMLResponse)
     async def login_page(request: Request) -> HTMLResponse:
-        return _render(request, "login.html", {"title": "Acceder"})
+        return _render(request, "login.html", {"title": "Acceder", "active_nav": "login", "page_kind": "auth"})
 
     @app.post("/login")
     async def login(
@@ -354,12 +359,13 @@ def build_app() -> FastAPI:
             return _redirect("/login")
 
         request.session["user_id"] = user.id
+        redirect_target = _complete_pending_guest_publication(request, user) or "/app/chats"
         _flash(request, f"Bienvenido de nuevo, {user.full_name}.", "success")
-        return _redirect("/my-demands")
+        return _redirect(redirect_target)
 
     @app.get("/signup", response_class=HTMLResponse)
     async def signup_page(request: Request) -> HTMLResponse:
-        return _render(request, "signup.html", {"title": "Crear cuenta"})
+        return _render(request, "signup.html", {"title": "Crear cuenta", "active_nav": "signup", "page_kind": "auth"})
 
     @app.post("/signup")
     async def signup(
@@ -394,8 +400,9 @@ def build_app() -> FastAPI:
             return _redirect("/signup")
 
         request.session["user_id"] = user.id
+        redirect_target = _complete_pending_guest_publication(request, user) or "/app/chats"
         _flash(request, f"Cuenta creada. Hola, {user.full_name}.", "success")
-        return _redirect("/my-demands")
+        return _redirect(redirect_target)
 
     @app.post("/logout")
     async def logout(request: Request, csrf_token: str = Form(...)) -> RedirectResponse:
@@ -405,29 +412,84 @@ def build_app() -> FastAPI:
 
     @app.get("/dashboard")
     async def dashboard_redirect() -> RedirectResponse:
-        return _redirect("/my-demands")
+        return _redirect("/app/chats")
 
-    @app.get("/my-demands", response_class=HTMLResponse)
-    async def my_demands_page(request: Request, selected_demand_id: int | None = None, selected_offer_id: int | None = None) -> HTMLResponse:
-        user = _get_current_user(request)
-        if not user:
-            _flash(request, "Necesitas iniciar sesión para acceder a tus demandas.", "error")
-            return _redirect("/login")
-        data = get_dashboard_data(user.id)
-        demand_view = _build_demands_workspace(data["my_demands_active"], selected_demand_id, selected_offer_id)
-        archived_view = _build_demands_workspace(data["my_demands_archived"], None, None)
+    @app.get("/how-it-works", response_class=HTMLResponse)
+    async def how_it_works_page(request: Request) -> HTMLResponse:
         return _render(
             request,
-            "my_demands.html",
+            "how_it_works.html",
             {
-                "title": "Mis Demandas",
-                "my_demands_active": data["my_demands_active"],
-                "my_demands_archived": data["my_demands_archived"],
-                "demand_view": demand_view,
-                "archived_demand_view": archived_view,
-                "my_demands_active_json": _to_json_ready(data["my_demands_active"]),
+                "title": "Cómo funciona",
+                "active_nav": "how-it-works",
+                "page_kind": "public",
             },
         )
+
+    @app.get("/app/chats", response_class=HTMLResponse)
+    async def app_chats_page(
+        request: Request,
+        offer_id: int | None = None,
+        demand_id: int | None = None,
+        role: str = "owner",
+        demand_status: str = "active",
+        offer_filter: str = "visible",
+    ) -> HTMLResponse:
+        user = _get_current_user(request)
+        if not user:
+            _flash(request, "Necesitas iniciar sesión para acceder a tus chats.", "error")
+            return _redirect("/login")
+        data = get_dashboard_data(user.id, demand_status_filter=demand_status, offer_filter=offer_filter)
+        return _render(
+            request,
+            "app_chats.html",
+            {
+                "title": "Mis chats",
+                "active_nav": "app-chats",
+                "page_kind": "app",
+                "workspace_summary": {
+                    "owner_threads": sum(len(item.get("conversations", [])) for item in data["my_demands_active"]),
+                    "supplier_threads": len(data["my_offers_active"]),
+                    "open_demands": len(data["my_demands_active"]),
+                },
+                "initial_offer_id": offer_id,
+                "initial_demand_id": demand_id,
+                "initial_chat_role": role if role in {"owner", "supplier"} else "owner",
+                "initial_demand_status_filter": data.get("demand_status_filter", "active"),
+                "initial_offer_filter": data.get("offer_filter", "visible"),
+                "demand_status_counts": data.get("my_demands_status_counts", {}),
+                "offer_status_counts": data.get("my_offers_status_counts", {}),
+            },
+        )
+
+    @app.get("/app/filters", response_class=HTMLResponse)
+    async def app_filters_page(request: Request) -> HTMLResponse:
+        user = _get_current_user(request)
+        if not user:
+            _flash(request, "Necesitas iniciar sesión para acceder a tus filtros.", "error")
+            return _redirect("/login")
+        saved_filters = list_saved_filters(user.id)
+        return _render(
+            request,
+            "app_filters.html",
+            {
+                "title": "Mis filtros",
+                "active_nav": "app-filters",
+                "page_kind": "app",
+                "saved_filters": saved_filters,
+            },
+        )
+
+    @app.get("/app/activity", response_class=HTMLResponse)
+    async def app_activity_page(request: Request) -> RedirectResponse:
+        return _redirect("/app/chats")
+
+    @app.get("/my-demands", response_class=HTMLResponse)
+    async def my_demands_page(request: Request, selected_demand_id: int | None = None, selected_offer_id: int | None = None) -> RedirectResponse:
+        target = "/app/chats"
+        if selected_offer_id:
+            target = f"/app/chats?offer_id={selected_offer_id}"
+        return _redirect(target)
 
     @app.get("/admin/demands", response_class=HTMLResponse)
     async def admin_demands_page(request: Request) -> HTMLResponse:
@@ -648,26 +710,11 @@ def build_app() -> FastAPI:
         return _redirect("/admin/schema")
 
     @app.get("/my-offers", response_class=HTMLResponse)
-    async def my_offers_page(request: Request, selected_offer_id: int | None = None) -> HTMLResponse:
-        user = _get_current_user(request)
-        if not user:
-            _flash(request, "Necesitas iniciar sesión para acceder a tus ofertas.", "error")
-            return _redirect("/login")
-        data = get_dashboard_data(user.id)
-        offers_view = _build_offers_workspace(data["my_offers_active"], selected_offer_id)
-        archived_offers_view = _build_offers_workspace(data["my_offers_archived"], None)
-        return _render(
-            request,
-            "my_offers.html",
-            {
-                "title": "Mis Ofertas",
-                "my_offers_active": data["my_offers_active"],
-                "my_offers_archived": data["my_offers_archived"],
-                "offers_view": offers_view,
-                "archived_offers_view": archived_offers_view,
-                "my_offers_active_json": _to_json_ready(data["my_offers_active"]),
-            },
-        )
+    async def my_offers_page(request: Request, selected_offer_id: int | None = None) -> RedirectResponse:
+        target = "/app/chats?role=supplier"
+        if selected_offer_id:
+            target = f"/app/chats?role=supplier&offer_id={selected_offer_id}"
+        return _redirect(target)
 
     @app.get("/api/offers/{offer_id}/thread")
     async def offer_thread_api(request: Request, offer_id: int) -> dict[str, Any]:
@@ -773,36 +820,71 @@ def build_app() -> FastAPI:
         return get_notification_summary(user.id)
 
     @app.get("/api/workspace")
-    async def workspace_api(request: Request) -> dict[str, Any]:
+    async def workspace_api(request: Request, demand_status: str = "active", offer_filter: str = "visible") -> dict[str, Any]:
         user = _get_current_user(request)
         if not user:
             raise HTTPException(status_code=401, detail="Autenticación requerida")
-        data = get_dashboard_data(user.id)
+        data = get_dashboard_data(user.id, demand_status_filter=demand_status, offer_filter=offer_filter)
+        return _to_json_ready(data)
+
+    @app.post("/api/demands/{demand_id}/lifecycle")
+    async def demand_lifecycle_api(
+        request: Request,
+        demand_id: int,
+        action: str = Form(...),
+        demand_status: str = Form("active"),
+        csrf_token: str = Form(...),
+    ) -> dict[str, Any]:
+        _validate_csrf(request, csrf_token)
+        user = _get_current_user(request)
+        if not user:
+            raise HTTPException(status_code=401, detail="Autenticación requerida")
+        if not update_web_demand_lifecycle(user.id, demand_id, action):
+            raise HTTPException(status_code=400, detail="No se ha podido actualizar la demanda")
+        data = get_dashboard_data(user.id, demand_status_filter=demand_status)
+        return _to_json_ready(data)
+
+    @app.post("/api/offers/{offer_id}/workspace-action")
+    async def offer_workspace_action_api(
+        request: Request,
+        offer_id: int,
+        action: str = Form(...),
+        demand_status: str = Form("active"),
+        offer_filter: str = Form("visible"),
+        csrf_token: str = Form(...),
+    ) -> dict[str, Any]:
+        _validate_csrf(request, csrf_token)
+        user = _get_current_user(request)
+        if not user:
+            raise HTTPException(status_code=401, detail="Autenticación requerida")
+        if not update_supplier_offer_workspace(user.id, offer_id, action):
+            raise HTTPException(status_code=400, detail="No se ha podido actualizar la oferta")
+        data = get_dashboard_data(user.id, demand_status_filter=demand_status, offer_filter=offer_filter)
         return _to_json_ready(data)
 
     @app.get("/demands/new", response_class=HTMLResponse)
     async def new_demand_page(request: Request) -> HTMLResponse:
         user = _get_current_user(request)
-        if not user:
-            _flash(request, "Necesitas iniciar sesión para publicar una demanda.", "error")
-            return _redirect("/login")
         if request.query_params.get("fresh") in {"1", "true", "yes"}:
-            _clear_demand_wizard(user.id)
-        wizard = _load_demand_wizard(user.id)
+            _clear_demand_wizard(request, user.id if user else None)
+        wizard = _load_demand_wizard(request, user.id if user else None)
         active_wizard = _inflate_wizard_for_view(wizard) if wizard and wizard.get("mode") == "create" else None
         return _render(
             request,
             "new_demand.html",
             {
                 "title": "Nueva demanda",
+                "active_nav": "publish",
+                "page_kind": "public",
                 "wizard_mode": "create",
                 "active_wizard": active_wizard,
                 "submit_action": "/demands",
                 "submit_label": "Analizar y continuar",
-                "page_title": "Qué necesitas?",
-                "page_note": "",
+                "page_title": "Publica lo que necesitas",
+                "page_note": "Describe tu necesidad con tus palabras. Te ayudaremos a completar solo lo imprescindible.",
                 "initial_text": (active_wizard or {}).get("state", {}).get("original_text", ""),
                 "edit_demand": None,
+                "auth_stage": "guest" if not user else "authenticated",
             },
         )
 
@@ -816,13 +898,15 @@ def build_app() -> FastAPI:
         if not demand:
             _flash(request, "Solo puedes editar tus demandas abiertas.", "error")
             return _redirect("/my-demands")
-        wizard = _load_demand_wizard(user.id)
+        wizard = _load_demand_wizard(request, user.id)
         active_wizard = _inflate_wizard_for_view(wizard) if wizard and wizard.get("mode") == "edit" and wizard.get("target_demand_id") == demand_id else None
         return _render(
             request,
             "new_demand.html",
             {
                 "title": "Editar demanda",
+                "active_nav": "publish",
+                "page_kind": "app",
                 "wizard_mode": "edit",
                 "active_wizard": active_wizard,
                 "submit_action": f"/demands/{demand_id}/edit",
@@ -842,16 +926,13 @@ def build_app() -> FastAPI:
     ) -> RedirectResponse:
         _validate_csrf(request, csrf_token)
         user = _get_current_user(request)
-        if not user:
-            _flash(request, "Necesitas iniciar sesión para publicar una demanda.", "error")
-            return _redirect("/login")
 
         if len(demand_text.strip()) < 8:
             _flash(request, "Escribe tu demanda con un poco más de detalle.", "error")
             return _redirect("/demands/new")
 
         state = SessionState(original_text=demand_text.strip())
-        return _prepare_demand_questionnaire(request, user.id, agent, state, wizard_mode="create")
+        return _prepare_demand_questionnaire(request, user.id if user else None, agent, state, wizard_mode="create")
 
     @app.post("/demands/{demand_id}/edit")
     async def edit_demand_route(
@@ -880,11 +961,7 @@ def build_app() -> FastAPI:
         form = await request.form()
         _validate_csrf(request, str(form.get("csrf_token", "")))
         user = _get_current_user(request)
-        if not user:
-            _flash(request, "Necesitas iniciar sesión para continuar tu demanda.", "error")
-            return _redirect("/login")
-
-        wizard = _load_demand_wizard(user.id)
+        wizard = _load_demand_wizard(request, user.id if user else None)
         if not wizard:
             _flash(request, "No hay ninguna demanda pendiente de completar.", "error")
             return _redirect("/demands/new")
@@ -933,7 +1010,8 @@ def build_app() -> FastAPI:
         if field_errors:
             _flash(request, "Completa los campos obligatorios marcados antes de publicar la demanda.", "error")
             _save_demand_wizard(
-                user.id,
+                request,
+                user.id if user else None,
                 {
                 **wizard,
                 "state": _state_to_session(state),
@@ -944,7 +1022,7 @@ def build_app() -> FastAPI:
 
         return _prepare_demand_review(
             request,
-            user.id,
+            user.id if user else None,
             agent,
             state,
             wizard_mode=wizard.get("mode", "create"),
@@ -959,13 +1037,11 @@ def build_app() -> FastAPI:
     ) -> RedirectResponse:
         _validate_csrf(request, csrf_token)
         user = _get_current_user(request)
-        if not user:
-            return _redirect("/login")
-        wizard = _load_demand_wizard(user.id)
+        wizard = _load_demand_wizard(request, user.id if user else None)
         if not wizard:
             return _redirect("/demands/new")
         wizard["step"] = "text"
-        _save_demand_wizard(user.id, wizard)
+        _save_demand_wizard(request, user.id if user else None, wizard)
         return _redirect(_wizard_return_path(wizard.get("mode", "create"), wizard.get("target_demand_id")))
 
     @app.post("/demands/wizard/back-to-questions")
@@ -975,18 +1051,51 @@ def build_app() -> FastAPI:
     ) -> RedirectResponse:
         _validate_csrf(request, csrf_token)
         user = _get_current_user(request)
-        if not user:
-            return _redirect("/login")
-        wizard = _load_demand_wizard(user.id)
+        wizard = _load_demand_wizard(request, user.id if user else None)
         if not wizard:
             return _redirect("/demands/new")
         wizard["step"] = "questions"
-        _save_demand_wizard(user.id, wizard)
+        _save_demand_wizard(request, user.id if user else None, wizard)
         return _redirect(_wizard_return_path(wizard.get("mode", "create"), wizard.get("target_demand_id")))
 
     @app.get("/demands/{demand_id}", response_class=HTMLResponse)
-    async def demand_detail_redirect(demand_id: int) -> RedirectResponse:
-        return _redirect(f"/#demand-{demand_id}")
+    async def demand_detail_page(request: Request, demand_id: int, offer_id: int | None = None) -> HTMLResponse:
+        current_user = _get_current_user(request)
+        demand = get_demand_detail(demand_id, current_user.id if current_user else None)
+        if not demand:
+            raise HTTPException(status_code=404, detail="Demanda no encontrada")
+        if demand.get("effective_status") != "open" and not (demand.get("is_owner") or demand.get("viewer_has_offer")):
+            raise HTTPException(status_code=404, detail="Demanda no disponible")
+        offers = get_offers_for_owner(demand_id, current_user.id) if current_user and demand.get("is_owner") else []
+        owner_selected_offer_id = None
+        if offers:
+            valid_offer_ids = {item.id for item in offers}
+            if offer_id in valid_offer_ids:
+                owner_selected_offer_id = offer_id
+            else:
+                owner_selected_offer_id = offers[0].id
+        existing_thread = None
+        if current_user and demand.get("viewer_has_offer") and demand.get("viewer_offer_id"):
+            existing_thread = get_offer_thread(demand["viewer_offer_id"], current_user.id)
+        registry = get_master_schema_registry()
+        schema = registry.resolve_intent_schema(demand.get("intent_type", ""))
+        category_path = f"{registry.domains.get(schema.intent_domain, schema.intent_domain)} > {schema.display_name}"
+        detail_entries = _demand_detail_answered_fields(demand)
+        return _render(
+            request,
+            "demand_detail.html",
+            {
+                "title": demand["summary"],
+                "active_nav": "explore",
+                "page_kind": "public",
+                "demand": demand,
+                "offers": offers,
+                "owner_selected_offer_id": owner_selected_offer_id,
+                "demand_category_path": category_path,
+                "detail_entries": detail_entries,
+                "existing_thread": existing_thread,
+            },
+        )
 
     @app.post("/demands/{demand_id}/offers")
     async def create_offer_route(
@@ -1008,7 +1117,7 @@ def build_app() -> FastAPI:
             return _redirect(target)
 
         try:
-            create_offer(
+            offer = create_offer(
                 demand_id=demand_id,
                 supplier_user_id=user.id,
                 message=message,
@@ -1018,27 +1127,15 @@ def build_app() -> FastAPI:
             return _redirect(target)
 
         _flash(request, "Tu oferta ha quedado registrada.", "success")
-        return _redirect("/my-offers")
+        return _redirect(f"/app/chats?offer_id={offer.id}")
 
     @app.get("/offers/{offer_id}", response_class=HTMLResponse)
-    async def offer_thread_page(request: Request, offer_id: int) -> HTMLResponse:
+    async def offer_thread_page(request: Request, offer_id: int) -> RedirectResponse:
         user = _get_current_user(request)
         if not user:
             _flash(request, "Necesitas iniciar sesión para ver esta conversación.", "error")
             return _redirect("/login")
-
-        thread = get_offer_thread(offer_id, user.id)
-        if not thread:
-            raise HTTPException(status_code=404, detail="Conversación no encontrada")
-
-        return _render(
-            request,
-            "offer_thread.html",
-            {
-                "title": f"Conversación · {thread['demand_summary']}",
-                "thread": thread,
-            },
-        )
+        return _redirect(f"/app/chats?offer_id={offer_id}")
 
     @app.post("/offers/{offer_id}/messages")
     async def offer_message_route(
@@ -1059,7 +1156,7 @@ def build_app() -> FastAPI:
             return _redirect(target)
         if not create_offer_message(offer_id, user.id, body):
             _flash(request, "No se ha podido enviar el mensaje.", "error")
-            return _redirect("/my-demands")
+            return _redirect("/app/chats")
         return _redirect(target)
 
     @app.post("/api/offers/{offer_id}/messages")
@@ -1095,10 +1192,43 @@ def build_app() -> FastAPI:
             return _redirect("/login")
 
         if delete_web_demand(demand_id, user.id):
-            _flash(request, "La demanda abierta se ha eliminado.", "success")
+            _flash(request, "La demanda se ha eliminado.", "success")
         else:
-            _flash(request, "Solo puedes borrar tus demandas abiertas.", "error")
+            _flash(request, "No he podido eliminar esa demanda.", "error")
         return _redirect("/my-demands")
+
+    @app.post("/demands/{demand_id}/lifecycle")
+    async def demand_lifecycle_page_route(
+        request: Request,
+        demand_id: int,
+        action: str = Form(...),
+        csrf_token: str = Form(...),
+    ) -> RedirectResponse:
+        _validate_csrf(request, csrf_token)
+        user = _get_current_user(request)
+        if not user:
+            _flash(request, "Necesitas iniciar sesión para actualizar una demanda.", "error")
+            return _redirect("/login")
+
+        normalized_action = (action or "").strip().lower()
+        if not update_web_demand_lifecycle(user.id, demand_id, normalized_action):
+            _flash(request, "No he podido actualizar esa demanda.", "error")
+            return _redirect(f"/demands/{demand_id}")
+
+        if normalized_action == "delete":
+            _flash(request, "La demanda se ha eliminado.", "success")
+            return _redirect("/app/chats")
+
+        if normalized_action == "pause":
+            _flash(request, "La demanda ha quedado pausada.", "success")
+        elif normalized_action == "reactivate":
+            _flash(request, "La demanda ha vuelto a estar activa.", "success")
+        elif normalized_action == "pin":
+            _flash(request, "La demanda ha quedado fijada.", "success")
+        elif normalized_action == "unpin":
+            _flash(request, "La demanda ya no está fijada.", "success")
+
+        return _redirect(f"/demands/{demand_id}")
 
     @app.get("/auth/{provider}")
     async def auth_start(request: Request, provider: str) -> RedirectResponse:
@@ -1130,8 +1260,9 @@ def build_app() -> FastAPI:
             avatar_url=profile.get("avatar_url"),
         )
         request.session["user_id"] = user.id
+        redirect_target = _complete_pending_guest_publication(request, user) or "/app/chats"
         _flash(request, f"Sesión iniciada con {SOCIAL_PROVIDERS[provider]['label']}.", "success")
-        return _redirect("/my-demands")
+        return _redirect(redirect_target)
 
     return app
 
@@ -1627,7 +1758,7 @@ def _enabled_social_providers() -> list[dict[str, str]]:
 
 def _render(request: Request, template_name: str, context: dict[str, Any]) -> HTMLResponse:
     current_user = _get_current_user(request)
-    wizard = _load_demand_wizard(current_user.id) if current_user else None
+    wizard = _load_demand_wizard(request, current_user.id) if current_user else None
     if wizard:
         wizard = _inflate_wizard_for_view(wizard)
     notification_summary = (
@@ -1645,6 +1776,8 @@ def _render(request: Request, template_name: str, context: dict[str, Any]) -> HT
             "debug_normalization": _normalization_debug_enabled(),
             "notification_summary": notification_summary,
             "demand_budget_display": _demand_budget_display,
+            "page_kind": context.get("page_kind", "public"),
+            "active_nav": context.get("active_nav", ""),
             **context,
         },
     )
@@ -1665,6 +1798,12 @@ def _format_eur_amount(value: Any) -> str:
     return f"{formatted} €"
 
 
+def _item_value(item: Any, key: str, default: Any = None) -> Any:
+    if isinstance(item, dict):
+        return item.get(key, default)
+    return getattr(item, key, default)
+
+
 def _budget_unit_marketplace_label(intent_type: str) -> str:
     schema = get_master_schema_registry().resolve_intent_schema(intent_type)
     unit_map = {
@@ -1681,11 +1820,11 @@ def _budget_unit_marketplace_label(intent_type: str) -> str:
 
 
 def _demand_budget_display(demand: Any) -> dict[str, Any]:
-    min_value = getattr(demand, "budget_min", None)
-    max_value = getattr(demand, "budget_max", None)
+    min_value = _item_value(demand, "budget_min")
+    max_value = _item_value(demand, "budget_max")
     has_min = min_value is not None
     has_max = max_value is not None
-    unit_label = _budget_unit_marketplace_label(getattr(demand, "intent_type", ""))
+    unit_label = _budget_unit_marketplace_label(_item_value(demand, "intent_type", ""))
     unit_suffix = f" · {unit_label}" if unit_label else ""
     if has_min and has_max:
         try:
@@ -2097,7 +2236,7 @@ def _build_offers_workspace(offers: list[dict[str, Any]], selected_offer_id: int
 
 def _prepare_demand_questionnaire(
     request: Request,
-    user_id: int,
+    user_id: int | None,
     agent: DemandAgent,
     state: SessionState,
     wizard_mode: str = "create",
@@ -2121,6 +2260,7 @@ def _prepare_demand_questionnaire(
     if not _inflate_wizard_for_view(wizard_data).get("field_entries"):
         return _finalize_published_demand(
             request,
+            request,
             user_id,
             agent,
             state,
@@ -2128,13 +2268,13 @@ def _prepare_demand_questionnaire(
             wizard_mode=wizard_mode,
             target_demand_id=target_demand_id,
         )
-    _save_demand_wizard(user_id, wizard_data)
+    _save_demand_wizard(request, user_id, wizard_data)
     return _redirect(_wizard_return_path(wizard_mode, target_demand_id))
 
 
 def _prepare_demand_review(
     request: Request,
-    user_id: int,
+    user_id: int | None,
     agent: DemandAgent,
     state: SessionState,
     wizard_mode: str = "create",
@@ -2168,6 +2308,7 @@ def _prepare_demand_review(
             else:
                 _flash(request, "Faltan algunos campos obligatorios antes de publicar la demanda.", "error")
         _save_demand_wizard(
+            request,
             user_id,
             _build_wizard_session(
             state=state,
@@ -2261,7 +2402,7 @@ def _build_local_review_response(state: SessionState) -> tuple[LLMResponse, Dema
 
 def _finalize_published_demand(
     request: Request,
-    user_id: int,
+    user_id: int | None,
     agent: DemandAgent,
     state: SessionState,
     response: LLMResponse,
@@ -2271,6 +2412,37 @@ def _finalize_published_demand(
     prebuilt_demand: DemandResult | None = None,
 ) -> HTMLResponse | RedirectResponse:
     demand = prebuilt_demand or agent.build_final_demand(state, response)
+    if user_id is None:
+        wizard_data = _build_wizard_session(
+            state=_compact_review_state(state),
+            response=response,
+            wizard_mode=wizard_mode,
+            target_demand_id=target_demand_id,
+            step="review",
+            review_demand=demand,
+            answered_fields=_collect_answered_fields(state, asked_entries or []),
+        )
+        wizard_data["awaiting_auth"] = True
+        _save_demand_wizard(request, None, wizard_data)
+        active_wizard = _inflate_wizard_for_view(wizard_data)
+        return _render(
+            request,
+            "new_demand.html",
+            {
+                "title": "Completa tu publicación",
+                "active_nav": "publish",
+                "page_kind": "public",
+                "wizard_mode": wizard_mode,
+                "active_wizard": active_wizard,
+                "submit_action": "/demands",
+                "submit_label": "Analizar y continuar",
+                "page_title": "Tu demanda está lista para publicarse",
+                "page_note": "",
+                "initial_text": state.original_text,
+                "edit_demand": None,
+                "auth_stage": "guest",
+            },
+        )
     if wizard_mode == "edit" and target_demand_id:
         persisted_demand = update_web_demand_from_agent(target_demand_id, user_id, demand, state)
         if not persisted_demand:
@@ -2289,12 +2461,14 @@ def _finalize_published_demand(
         answered_fields=_collect_answered_fields(state, asked_entries or []),
     )
     active_wizard = _inflate_wizard_for_view(wizard_data)
-    _clear_demand_wizard(user_id)
+    _clear_demand_wizard(request, user_id)
     return _render(
         request,
         "new_demand.html",
         {
             "title": "Nueva demanda" if wizard_mode == "create" else "Editar demanda",
+            "active_nav": "publish",
+            "page_kind": "app" if user_id else "public",
             "wizard_mode": wizard_mode,
             "active_wizard": active_wizard,
             "submit_action": "/demands" if wizard_mode == "create" else f"/demands/{target_demand_id}/edit",
@@ -2349,6 +2523,8 @@ def _inflate_wizard_for_view(wizard: dict[str, Any]) -> dict[str, Any]:
         view["schema_display_name"] = schema.display_name
         view["schema_required_fields"] = list(schema.active_required_fields(state.known_fields))
         view["schema_debug_outline"] = _schema_debug_outline(schema)
+        view["intent_schema_json"] = _raw_intent_schema_payload(schema.intent_type)
+        view["intent_schema_admin_url"] = f"/admin/schema?intent_type={quote(schema.intent_type)}" if schema.intent_type else "/admin/schema"
         view["published_message"] = _published_confirmation_message(state, view.get("review_demand", {}))
     else:
         response = _response_from_wizard(view)
@@ -2359,6 +2535,8 @@ def _inflate_wizard_for_view(wizard: dict[str, Any]) -> dict[str, Any]:
         view["schema_display_name"] = schema.display_name
         view["schema_required_fields"] = list(schema.active_required_fields(state.known_fields))
         view["schema_debug_outline"] = _schema_debug_outline(schema)
+        view["intent_schema_json"] = _raw_intent_schema_payload(schema.intent_type)
+        view["intent_schema_admin_url"] = f"/admin/schema?intent_type={quote(schema.intent_type)}" if schema.intent_type else "/admin/schema"
     return view
 
 
@@ -2369,11 +2547,31 @@ def _schema_debug_outline(schema) -> list[dict[str, str]]:
         marker = "*" if mode == "always" else "o" if mode == "conditional" else ""
         items.append({"name": name, "marker": marker})
 
-    append_item("location", schema.location_policy.required_mode)
-    append_item("budget", schema.budget_policy.required_mode)
+    if getattr(schema, "has_location_field", False):
+        append_item("location", schema.location_policy.required_mode)
+    if getattr(schema, "has_budget_field", False):
+        append_item("budget", schema.budget_policy.required_mode)
     for field in schema.fields:
         append_item(field.name, field.required)
     return items
+
+
+def _raw_intent_schema_payload(intent_type: str | None) -> dict[str, Any]:
+    if not intent_type:
+        return {}
+    registry = get_master_schema_registry()
+    for domain in registry.raw_schema.get("domains", []) or []:
+        domain_code = str(domain.get("code") or "").strip()
+        for item in domain.get("intent_types", []) or []:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("intent_type") or "").strip() != str(intent_type).strip():
+                continue
+            return {
+                **item,
+                "intent_domain": str(item.get("intent_domain") or domain_code).strip(),
+            }
+    return {}
 
 
 def _response_from_wizard(wizard: dict[str, Any]) -> LLMResponse:
@@ -2421,6 +2619,8 @@ def _compact_review_demand(demand: DemandResult) -> dict[str, Any]:
         "budget_max": demand.budget_max,
         "urgency": demand.urgency,
         "dates": demand.dates,
+        "attributes": demand.attributes,
+        "known_fields": demand.known_fields,
         "enough_information": demand.enough_information,
         "confidence": demand.confidence,
         "schema_version": demand.schema_version,
@@ -2585,16 +2785,20 @@ def _build_field_entries(state: SessionState, response: LLMResponse, field_error
     entries: list[dict[str, Any]] = []
     required_missing_set = set(response.required_missing_fields)
 
-    if schema.location_required_for(merged_known) and "location_value" not in ordered_required:
+    if getattr(schema, "has_location_field", False) and schema.location_required_for(merged_known) and "location_value" not in ordered_required:
         ordered_required.insert(0, "location_value")
 
     budget_entry_name = _budget_entry_name(schema)
-    if budget_entry_name and budget_entry_name not in ordered_required and budget_entry_name not in optional_universe:
+    if getattr(schema, "has_location_field", False) and schema.location_policy.required_mode == "never" and "location_value" not in required_universe and "location_value" not in optional_universe:
+        optional_universe.insert(0, "location_value")
+
+    if getattr(schema, "has_budget_field", False) and budget_entry_name and budget_entry_name not in ordered_required and budget_entry_name not in optional_universe:
         if schema.budget_required_for(merged_known):
             insert_at = 1 if schema.location_required_for(merged_known) else 0
             ordered_required.insert(insert_at, budget_entry_name)
         else:
-            optional_universe.insert(0, budget_entry_name)
+            insert_at = 1 if optional_universe and optional_universe[0] == "location_value" else 0
+            optional_universe.insert(insert_at, budget_entry_name)
 
     latent_conditional_required: list[str] = []
     for field in schema.fields:
@@ -2602,10 +2806,13 @@ def _build_field_entries(state: SessionState, response: LLMResponse, field_error
             continue
         if field.name not in ordered_required and field.name not in latent_conditional_required:
             latent_conditional_required.append(field.name)
-    if schema.location_policy.required_mode == "conditional" and "location_value" not in ordered_required and "location_value" not in latent_conditional_required:
+    if getattr(schema, "has_location_field", False) and schema.location_policy.required_mode == "conditional" and "location_value" not in ordered_required and "location_value" not in latent_conditional_required:
         latent_conditional_required.insert(0, "location_value")
-    if schema.budget_policy.required_mode == "conditional" and budget_entry_name and budget_entry_name not in ordered_required and budget_entry_name not in latent_conditional_required:
+    if getattr(schema, "has_budget_field", False) and schema.budget_policy.required_mode == "conditional" and budget_entry_name and budget_entry_name not in ordered_required and budget_entry_name not in latent_conditional_required:
         latent_conditional_required.append(budget_entry_name)
+
+    ordered_required = _reorder_conditional_required_fields(schema, ordered_required, merged_known)
+    latent_conditional_required = _reorder_conditional_required_fields(schema, latent_conditional_required, merged_known)
 
     for field_name in [*ordered_required, *latent_conditional_required]:
         prompt = _prompt_for_entry(field_name, state.original_text, schema)
@@ -2657,6 +2864,40 @@ def _build_field_entries(state: SessionState, response: LLMResponse, field_error
     return entries
 
 
+def _reorder_conditional_required_fields(schema, field_names: list[str], known_fields: dict[str, Any]) -> list[str]:
+    ordered = [name for name in field_names if name]
+    if len(ordered) < 2:
+        return ordered
+
+    dependency_map: dict[str, str] = {}
+    for item in schema.fields:
+        if item.required == "conditional" and item.when_field:
+            dependency_map[item.name] = item.when_field
+    if getattr(schema, "has_location_field", False) and schema.location_policy.required_mode == "conditional" and schema.location_policy.when_field:
+        dependency_map["location_value"] = schema.location_policy.when_field
+    budget_entry_name = _budget_entry_name(schema)
+    if getattr(schema, "has_budget_field", False) and schema.budget_policy.required_mode == "conditional" and budget_entry_name and schema.budget_policy.when_field:
+        dependency_map[budget_entry_name] = schema.budget_policy.when_field
+
+    moved = True
+    while moved:
+        moved = False
+        for field_name in list(ordered):
+            dependency = dependency_map.get(field_name)
+            if not dependency or dependency not in ordered:
+                continue
+            current_index = ordered.index(field_name)
+            dependency_index = ordered.index(dependency)
+            target_index = dependency_index + 1
+            if current_index != target_index:
+                ordered.pop(current_index)
+                if current_index < target_index:
+                    target_index -= 1
+                ordered.insert(target_index, field_name)
+                moved = True
+    return ordered
+
+
 def _conditional_rule_for_entry(schema, field_name: str) -> dict[str, Any] | None:
     if field_name == "location_value" and schema.location_policy.required_mode == "conditional":
         return {
@@ -2683,7 +2924,7 @@ def _conditional_rule_for_entry(schema, field_name: str) -> dict[str, Any] | Non
 
 
 def _budget_entry_name(schema) -> str:
-    if not schema.budget_fix_or_range:
+    if not getattr(schema, "has_budget_field", False):
         return ""
     return "budget_range" if schema.budget_fix_or_range == "range" else "budget_max"
 
@@ -3070,6 +3311,72 @@ def _collect_answered_fields(state: SessionState, field_entries: list[dict[str, 
     return answered
 
 
+def _demand_detail_answered_fields(demand: dict[str, Any]) -> list[dict[str, str]]:
+    registry = get_master_schema_registry()
+    intent_type = str(demand.get("intent_type") or "")
+    schema = registry.resolve_intent_schema(intent_type)
+    normalized_payload = demand.get("normalized_payload") or {}
+    raw_text = str(normalized_payload.get("raw_text") or demand.get("summary") or "").strip()
+    known_fields = merge_known_fields(
+        normalized_payload.get("known_fields") or {},
+        demand.get("attributes") or {},
+    )
+    excluded = {
+        "summary",
+        "description",
+        "intent_domain",
+        "intent_type",
+        "city",
+        "dates",
+        "start_date",
+        "end_date",
+        "budget_min",
+        "budget_max",
+        "budget_mode",
+        "budget_total",
+        "budget_range",
+        "budget_currency",
+        "location",
+        "location_value",
+        "location_mode",
+        "location_label",
+        "location_structured",
+        "location_city",
+        "location_json",
+        "city",
+        "search_location",
+        "location_question",
+        "budget_question",
+    }
+    entries: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def append_entry(field_name: str, value: Any) -> None:
+        if field_name in seen or field_name in excluded or not _has_content(value):
+            return
+        control = _field_control(field_name, value, schema.intent_type, schema.intent_domain, raw_text)
+        question = get_field_prompt(field_name, raw_text, schema.intent_type, schema.intent_domain).get("question", field_name)
+        entries.append(
+            {
+                "field_name": field_name,
+                "question": _detail_question_label(question),
+                "answer": _format_answer_for_review(value, control),
+            }
+        )
+        seen.add(field_name)
+
+    for field in schema.fields:
+        append_entry(field.name, known_fields.get(field.name))
+
+    for key, value in known_fields.items():
+        key_str = str(key)
+        if key_str.startswith("location_") or key_str.startswith("budget_"):
+            continue
+        append_entry(str(key), value)
+
+    return entries
+
+
 def _extract_field_answer(form, field_name: str, control: dict[str, Any]) -> Any:
     kind = control.get("kind")
     if kind == "zone_selector":
@@ -3357,16 +3664,43 @@ def _session_to_state(data: dict[str, Any]) -> SessionState:
     )
 
 
-def _load_demand_wizard(user_id: int) -> Optional[dict[str, Any]]:
-    return get_demand_wizard_record(user_id)
+def _guest_wizard_session_key() -> str:
+    return "guest_demand_wizard"
 
 
-def _save_demand_wizard(user_id: int, wizard: dict[str, Any]) -> None:
-    save_demand_wizard_record(user_id, wizard)
+def _load_demand_wizard(request: Request, user_id: int | None = None) -> Optional[dict[str, Any]]:
+    if user_id is not None:
+        return get_demand_wizard_record(user_id)
+    payload = request.session.get(_guest_wizard_session_key())
+    return dict(payload) if isinstance(payload, dict) else None
 
 
-def _clear_demand_wizard(user_id: int) -> None:
-    clear_demand_wizard_record(user_id)
+def _save_demand_wizard(request: Request, user_id: int | None, wizard: dict[str, Any]) -> None:
+    if user_id is not None:
+        save_demand_wizard_record(user_id, wizard)
+        return
+    request.session[_guest_wizard_session_key()] = wizard
+
+
+def _clear_demand_wizard(request: Request, user_id: int | None) -> None:
+    if user_id is not None:
+        clear_demand_wizard_record(user_id)
+        return
+    request.session.pop(_guest_wizard_session_key(), None)
+
+
+def _complete_pending_guest_publication(request: Request, user: Any) -> str | None:
+    wizard = _load_demand_wizard(request, None)
+    if not wizard or wizard.get("step") != "review" or not wizard.get("awaiting_auth"):
+        return None
+    try:
+        state = _session_to_state(wizard.get("state", {}))
+        draft = DemandResult.model_validate(wizard.get("review_demand") or {})
+        save_web_demand_from_agent(user.id, draft, state)
+    except Exception:
+        return None
+    _clear_demand_wizard(request, None)
+    return "/app/chats"
 
 
 def _field_display_label(field_name: str) -> str:
@@ -3375,6 +3709,17 @@ def _field_display_label(field_name: str) -> str:
     if normalized:
         return normalized[:1].lower() + normalized[1:]
     return field_name.replace("_", " ")
+
+
+def _detail_question_label(question: str) -> str:
+    text = str(question or "").strip()
+    if not text:
+        return ""
+    text = text.replace("(Opcional)", "").strip()
+    text = text.lstrip("¿").rstrip("?").strip()
+    if not text:
+        return ""
+    return text[:1].upper() + text[1:]
 
 
 def _field_errors_from_response(response: LLMResponse, state: SessionState) -> dict[str, str]:

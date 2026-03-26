@@ -29,6 +29,7 @@ from zone_selector import compact_zone_label, zone_to_storage_fields
 logger = logging.getLogger(__name__)
 
 DEFAULT_DEMAND_EXPIRY_HOURS = 48
+EXPIRED_CONVERSATION_GRACE_DAYS = 7
 _POSTGIS_AVAILABLE: Optional[bool] = None
 
 
@@ -87,6 +88,7 @@ CREATE TABLE IF NOT EXISTS demands (
     original_text    TEXT,
     conversation     JSONB DEFAULT '[]',
     status           TEXT NOT NULL DEFAULT 'open',
+    is_pinned        BOOLEAN NOT NULL DEFAULT FALSE,
     expires_at       TIMESTAMP DEFAULT (NOW() + interval '48 hours'),
     created_via      TEXT NOT NULL DEFAULT 'telegram',
     created_at       TIMESTAMP DEFAULT NOW()
@@ -99,6 +101,8 @@ CREATE TABLE IF NOT EXISTS offers (
     demand_id        INTEGER NOT NULL REFERENCES demands(id) ON DELETE CASCADE,
     supplier_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     message          TEXT NOT NULL,
+    supplier_is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
+    supplier_hidden  BOOLEAN NOT NULL DEFAULT FALSE,
     demand_owner_last_read_at TIMESTAMP,
     supplier_last_read_at TIMESTAMP,
     updated_at       TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -177,6 +181,7 @@ ALTERS_SQL = [
     "ALTER TABLE demands ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;",
     "ALTER TABLE demands ADD COLUMN IF NOT EXISTS intent_domain TEXT;",
     "ALTER TABLE demands ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open';",
+    "ALTER TABLE demands ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT FALSE;",
     "ALTER TABLE demands ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP DEFAULT (NOW() + interval '48 hours');",
     "ALTER TABLE demands ADD COLUMN IF NOT EXISTS created_via TEXT NOT NULL DEFAULT 'telegram';",
     "ALTER TABLE demands ADD COLUMN IF NOT EXISTS normalized_payload JSONB DEFAULT '{}'::jsonb;",
@@ -195,6 +200,8 @@ ALTERS_SQL = [
     "ALTER TABLE demands ADD COLUMN IF NOT EXISTS location_json JSONB DEFAULT '{}'::jsonb;",
     "ALTER TABLE demands ALTER COLUMN telegram_user_id DROP NOT NULL;",
     "ALTER TABLE offers ADD COLUMN IF NOT EXISTS message TEXT;",
+    "ALTER TABLE offers ADD COLUMN IF NOT EXISTS supplier_is_pinned BOOLEAN NOT NULL DEFAULT FALSE;",
+    "ALTER TABLE offers ADD COLUMN IF NOT EXISTS supplier_hidden BOOLEAN NOT NULL DEFAULT FALSE;",
     "ALTER TABLE offers ADD COLUMN IF NOT EXISTS demand_owner_last_read_at TIMESTAMP;",
     "ALTER TABLE offers ADD COLUMN IF NOT EXISTS supplier_last_read_at TIMESTAMP;",
     "ALTER TABLE offers ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW();",
@@ -307,6 +314,18 @@ def _normalized_payload_for_row(row: dict[str, Any]) -> dict[str, Any]:
     return normalize_existing_demand_record(dict(row), _schema_registry())
 
 
+def _expire_open_demands(cur) -> None:
+    cur.execute(
+        """
+        UPDATE demands
+        SET status = 'expired'
+        WHERE status = 'open'
+          AND expires_at IS NOT NULL
+          AND expires_at <= NOW()
+        """
+    )
+
+
 def _hydrate_demand_row(row: dict[str, Any]) -> dict[str, Any]:
     data = dict(row)
     data["normalized_payload"] = _normalized_payload_for_row(data)
@@ -346,6 +365,15 @@ def _hydrate_demand_row(row: dict[str, Any]) -> dict[str, Any]:
         data.get("location_label") or data.get("location"),
         data.get("location_raw_query"),
     )
+    effective_status = data.get("status") or "open"
+    data["effective_status"] = effective_status
+    data["is_pinned"] = bool(data.get("is_pinned"))
+    data["is_active"] = effective_status == "open"
+    data["can_interact"] = effective_status == "open"
+    data["can_pause"] = effective_status == "open"
+    data["can_reactivate"] = effective_status == "paused"
+    data["can_delete"] = effective_status != "deleted"
+    data["can_pin"] = effective_status != "deleted"
     return data
 
 
@@ -775,7 +803,7 @@ def create_web_demand(
                     RETURNING id, user_id, intent_domain, summary, intent_type, location, location_mode, location_admin_level,
                               location_label, location_lat, location_lon, location_radius_km, location_radius_bucket,
                               location_source, location_raw_query, location_bbox, location_geojson, location_json,
-                              budget_min, budget_max, urgency, status, expires_at, created_at, attributes, normalized_payload
+                              budget_min, budget_max, urgency, status, is_pinned, expires_at, created_at, attributes, normalized_payload
                     """,
                     (
                         user_id,
@@ -853,7 +881,7 @@ def save_web_demand_from_agent(
                     RETURNING id, user_id, intent_domain, summary, intent_type, location, location_mode, location_admin_level,
                               location_label, location_lat, location_lon, location_radius_km, location_radius_bucket,
                               location_source, location_raw_query, location_bbox, location_geojson, location_json,
-                              budget_min, budget_max, urgency, status, expires_at, created_at, attributes, normalized_payload
+                              budget_min, budget_max, urgency, status, is_pinned, expires_at, created_at, attributes, normalized_payload
                     """,
                     (
                         user_id,
@@ -927,6 +955,7 @@ def get_public_demands(
     conn = _get_connection()
     try:
         with conn.cursor() as cur:
+            _expire_open_demands(cur)
             where_parts = [
                 "d.status = 'open'",
                 "(d.expires_at IS NULL OR d.expires_at > NOW())",
@@ -960,7 +989,7 @@ def get_public_demands(
                 SELECT d.id, d.user_id, d.intent_domain, d.summary, d.intent_type, d.location, d.location_label, d.location_lat,
                        d.location_lon, d.location_radius_km, d.location_radius_bucket, d.location_source, d.location_raw_query,
                        d.location_mode, d.location_admin_level, d.location_bbox, d.location_geojson, d.location_json, d.budget_min, d.budget_max,
-                       d.urgency, d.status, d.expires_at, d.created_at, d.attributes, d.normalized_payload,
+                       d.urgency, d.status, d.is_pinned, d.expires_at, d.created_at, d.attributes, d.normalized_payload,
                        COALESCE(u.full_name, 'Demandante') AS owner_name,
                        COUNT(o.id)::INTEGER AS offer_count,
                        BOOL_OR(CASE WHEN o.supplier_user_id = %s THEN TRUE ELSE FALSE END) AS viewer_has_offer,
@@ -988,12 +1017,13 @@ def list_admin_demands(limit: int = 200) -> list[dict[str, Any]]:
     conn = _get_connection()
     try:
         with conn.cursor() as cur:
+            _expire_open_demands(cur)
             cur.execute(
                 """
                 SELECT d.id, d.user_id, d.intent_domain, d.summary, d.intent_type, d.location, d.location_label, d.location_lat,
                        d.location_lon, d.location_radius_km, d.location_radius_bucket, d.location_source, d.location_raw_query,
                        d.location_json, d.budget_min, d.budget_max,
-                       d.urgency, d.status, d.expires_at, d.created_at, d.attributes, d.normalized_payload, d.original_text,
+                       d.urgency, d.status, d.is_pinned, d.expires_at, d.created_at, d.attributes, d.normalized_payload, d.original_text,
                        COALESCE(u.full_name, 'Demandante') AS owner_name,
                        COUNT(o.id)::INTEGER AS offer_count
                 FROM demands d
@@ -1015,12 +1045,13 @@ def get_demand_detail(demand_id: int, viewer_user_id: Optional[int] = None) -> O
     conn = _get_connection()
     try:
         with conn.cursor() as cur:
+            _expire_open_demands(cur)
             cur.execute(
                 """
                 SELECT d.id, d.intent_domain, d.summary, d.intent_type, d.location, d.location_label, d.location_lat,
                        d.location_lon, d.location_radius_km, d.location_radius_bucket, d.location_source, d.location_raw_query,
                        d.location_json, d.budget_min, d.budget_max,
-                       d.urgency, d.status, d.expires_at, d.created_at, d.attributes, d.normalized_payload, d.user_id,
+                       d.urgency, d.status, d.is_pinned, d.expires_at, d.created_at, d.attributes, d.normalized_payload, d.user_id,
                        COALESCE(u.full_name, 'Demandante') AS owner_name,
                        COUNT(o.id)::INTEGER AS offer_count
                 FROM demands d
@@ -1036,6 +1067,8 @@ def get_demand_detail(demand_id: int, viewer_user_id: Optional[int] = None) -> O
                 return None
 
             data = _hydrate_demand_row(dict(row))
+            if data["effective_status"] == "deleted":
+                return None
             data["is_owner"] = viewer_user_id is not None and data["user_id"] == viewer_user_id
 
             if viewer_user_id is not None:
@@ -1064,12 +1097,13 @@ def get_editable_demand(demand_id: int, user_id: int) -> Optional[dict[str, Any]
     conn = _get_connection()
     try:
         with conn.cursor() as cur:
+            _expire_open_demands(cur)
             cur.execute(
                 """
                 SELECT d.id, d.user_id, d.intent_domain, d.summary, d.intent_type, d.location, d.location_label, d.location_lat,
                        d.location_lon, d.location_radius_km, d.location_radius_bucket, d.location_source, d.location_raw_query,
                        d.location_json, d.budget_min, d.budget_max,
-                       d.urgency, d.status, d.expires_at, d.created_at, d.attributes, d.normalized_payload, d.original_text,
+                       d.urgency, d.status, d.is_pinned, d.expires_at, d.created_at, d.attributes, d.normalized_payload, d.original_text,
                        COALESCE(u.full_name, 'Demandante') AS owner_name
                 FROM demands d
                 LEFT JOIN users u ON u.id = d.user_id
@@ -1181,19 +1215,28 @@ def update_web_demand_from_agent(
         conn.close()
 
 
-def get_dashboard_data(user_id: int) -> dict[str, Any]:
+def get_dashboard_data(user_id: int, demand_status_filter: str = "active", offer_filter: str = "visible") -> dict[str, Any]:
     """Recoge demandas y conversaciones del usuario, separando activos e históricos."""
     conn = _get_connection()
     try:
         with conn.cursor() as cur:
+            _expire_open_demands(cur)
             my_demands = _fetch_owned_demands_with_conversations(cur, user_id)
             my_offers = _fetch_supplier_offer_threads(cur, user_id)
+            demand_status_filter = (demand_status_filter or "active").strip().lower()
+            offer_filter = (offer_filter or "visible").strip().lower()
+            my_demands_filtered = _filter_owner_demands_by_status(my_demands, demand_status_filter)
+            my_offers_filtered = _filter_supplier_offers(my_offers, offer_filter)
 
             return {
-                "my_demands_active": [d for d in my_demands if d["is_active"]],
+                "my_demands_active": my_demands_filtered,
                 "my_demands_archived": [d for d in my_demands if not d["is_active"]],
-                "my_offers_active": [o for o in my_offers if o["is_active"]],
+                "my_offers_active": my_offers_filtered,
                 "my_offers_archived": [o for o in my_offers if not o["is_active"]],
+                "demand_status_filter": demand_status_filter,
+                "offer_filter": offer_filter,
+                "my_demands_status_counts": _owner_demand_status_counts(my_demands),
+                "my_offers_status_counts": _supplier_offer_status_counts(my_offers),
             }
     finally:
         conn.close()
@@ -1549,7 +1592,7 @@ def _fetch_owned_demands_with_conversations(cur, user_id: int) -> list[dict[str,
     cur.execute(
         """
         SELECT d.id, d.intent_domain, d.summary, d.intent_type, d.location, d.budget_min, d.budget_max,
-               d.urgency, d.status, d.expires_at, d.created_at, d.attributes, d.normalized_payload,
+               d.urgency, d.status, d.is_pinned, d.expires_at, d.created_at, d.attributes, d.normalized_payload,
                (d.status = 'open' AND (d.expires_at IS NULL OR d.expires_at > NOW())) AS is_active,
                COUNT(o.id)::INTEGER AS offer_count,
                BOOL_OR(COALESCE(om.has_unread, FALSE)) AS has_unread
@@ -1565,8 +1608,14 @@ def _fetch_owned_demands_with_conversations(cur, user_id: int) -> list[dict[str,
             ) AS has_unread
         ) om ON TRUE
         WHERE d.user_id = %s
+          AND d.status <> 'deleted'
+          AND (
+            d.status <> 'expired'
+            OR d.expires_at IS NULL
+            OR d.expires_at > NOW() - interval '7 days'
+          )
         GROUP BY d.id
-        ORDER BY d.created_at DESC
+        ORDER BY d.is_pinned DESC, d.created_at DESC
         """,
         (user_id, user_id),
     )
@@ -1616,15 +1665,18 @@ def _fetch_supplier_offer_threads(cur, user_id: int) -> list[dict[str, Any]]:
     cur.execute(
         """
         SELECT o.id AS offer_id, o.demand_id, o.message, o.created_at, o.updated_at,
+               o.supplier_is_pinned, o.supplier_hidden,
                d.summary AS demand_summary, d.intent_domain, d.intent_type, d.location, d.budget_min, d.budget_max,
                d.urgency, d.attributes, d.normalized_payload,
-               d.status, d.expires_at AS demand_expires_at,
+               COALESCE(owner_user.full_name, 'Demandante') AS owner_name,
+               d.status, d.is_pinned, d.expires_at AS demand_expires_at,
                (d.status = 'open' AND (d.expires_at IS NULL OR d.expires_at > NOW())) AS is_active,
                COALESCE(last_message.body, o.message) AS last_message,
                COALESCE(last_message.created_at, o.updated_at, o.created_at) AS last_message_at,
                COALESCE(unread.unread_count, 0)::INTEGER AS unread_count
         FROM offers o
         JOIN demands d ON d.id = o.demand_id
+        LEFT JOIN users owner_user ON owner_user.id = d.user_id
         LEFT JOIN LATERAL (
             SELECT m.body, m.created_at
             FROM offer_messages m
@@ -1640,7 +1692,13 @@ def _fetch_supplier_offer_threads(cur, user_id: int) -> list[dict[str, Any]]:
               AND (o.supplier_last_read_at IS NULL OR m.created_at > o.supplier_last_read_at)
         ) unread ON TRUE
         WHERE o.supplier_user_id = %s
-        ORDER BY COALESCE(last_message.created_at, o.updated_at, o.created_at) DESC
+          AND d.status <> 'deleted'
+          AND (
+            d.status <> 'expired'
+            OR d.expires_at IS NULL
+            OR d.expires_at > NOW() - interval '7 days'
+          )
+        ORDER BY o.supplier_is_pinned DESC, COALESCE(last_message.created_at, o.updated_at, o.created_at) DESC
         """,
         (user_id, user_id),
     )
@@ -1662,7 +1720,59 @@ def _fetch_supplier_offer_threads(cur, user_id: int) -> list[dict[str, Any]]:
             }
         )
         row["messages"] = _fetch_offer_messages(cur, row["offer_id"])
+        row["supplier_is_pinned"] = bool(row.get("supplier_is_pinned"))
+        row["supplier_hidden"] = bool(row.get("supplier_hidden"))
+        row["effective_status"] = str(row.get("status") or "open").lower()
+        row["can_pin"] = not row["supplier_hidden"]
+        row["can_hide"] = not row["supplier_hidden"]
+        row["can_unhide"] = row["supplier_hidden"]
+        row["can_interact"] = row["effective_status"] == "open"
     return rows
+
+
+def _owner_demand_status_counts(demands: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {"active": 0, "paused": 0, "expired": 0, "all": len(demands)}
+    for demand in demands:
+        status_name = str(demand.get("effective_status") or demand.get("status") or "").lower()
+        if status_name == "open":
+            counts["active"] += 1
+        elif status_name in counts:
+            counts[status_name] += 1
+    return counts
+
+
+def _filter_owner_demands_by_status(demands: list[dict[str, Any]], status_filter: str) -> list[dict[str, Any]]:
+    target = (status_filter or "active").strip().lower()
+    if target == "all":
+        return list(demands)
+    status_alias = {"active": "open", "paused": "paused", "expired": "expired"}
+    expected = status_alias.get(target, "open")
+    return [demand for demand in demands if str(demand.get("effective_status") or demand.get("status") or "").lower() == expected]
+
+
+def _supplier_offer_status_counts(offers: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {"visible": 0, "pinned": 0, "hidden": 0, "all": len(offers)}
+    for offer in offers:
+        hidden = bool(offer.get("supplier_hidden"))
+        pinned = bool(offer.get("supplier_is_pinned"))
+        if hidden:
+            counts["hidden"] += 1
+        else:
+            counts["visible"] += 1
+            if pinned:
+                counts["pinned"] += 1
+    return counts
+
+
+def _filter_supplier_offers(offers: list[dict[str, Any]], offer_filter: str) -> list[dict[str, Any]]:
+    target = (offer_filter or "visible").strip().lower()
+    if target == "all":
+        return list(offers)
+    if target == "hidden":
+        return [offer for offer in offers if bool(offer.get("supplier_hidden"))]
+    if target == "pinned":
+        return [offer for offer in offers if bool(offer.get("supplier_is_pinned")) and not bool(offer.get("supplier_hidden"))]
+    return [offer for offer in offers if not bool(offer.get("supplier_hidden"))]
 
 
 def _fetch_offer_messages(cur, offer_id: int) -> list[dict[str, Any]]:
@@ -1686,6 +1796,7 @@ def create_offer(demand_id: int, supplier_user_id: int, message: str) -> OfferRe
     try:
         with conn:
             with conn.cursor() as cur:
+                _expire_open_demands(cur)
                 cur.execute(
                     """
                     SELECT id, user_id, status, expires_at,
@@ -1698,6 +1809,8 @@ def create_offer(demand_id: int, supplier_user_id: int, message: str) -> OfferRe
                 demand_row = cur.fetchone()
                 if not demand_row:
                     raise ValueError("La demanda no existe.")
+                if demand_row["status"] == "deleted":
+                    raise ValueError("La demanda ya no está disponible.")
                 if demand_row["status"] != "open":
                     raise ValueError("La demanda ya no está abierta.")
                 if not demand_row["is_active"]:
@@ -1756,7 +1869,7 @@ def get_offer_thread(offer_id: int, viewer_user_id: int) -> Optional[dict[str, A
                     SELECT o.id, o.demand_id, o.supplier_user_id, o.message, o.created_at,
                            d.user_id AS demand_owner_user_id, d.summary AS demand_summary, d.intent_domain, d.intent_type,
                            d.location, d.budget_min, d.budget_max, d.urgency, d.attributes, d.normalized_payload,
-                           d.expires_at AS demand_expires_at,
+                           d.status AS demand_status, d.expires_at AS demand_expires_at,
                            su.full_name AS supplier_name, su.email AS supplier_email,
                            du.full_name AS demand_owner_name
                     FROM offers o
@@ -1765,6 +1878,12 @@ def get_offer_thread(offer_id: int, viewer_user_id: int) -> Optional[dict[str, A
                     LEFT JOIN users du ON du.id = d.user_id
                     WHERE o.id = %s
                       AND (o.supplier_user_id = %s OR d.user_id = %s)
+                      AND d.status <> 'deleted'
+                      AND (
+                        d.status <> 'expired'
+                        OR d.expires_at IS NULL
+                        OR d.expires_at > NOW() - interval '7 days'
+                      )
                     """,
                     (offer_id, viewer_user_id, viewer_user_id),
                 )
@@ -1788,6 +1907,8 @@ def get_offer_thread(offer_id: int, viewer_user_id: int) -> Optional[dict[str, A
                         "original_text": (data.get("attributes") or {}).get("description", data.get("demand_summary")),
                     }
                 )
+                data["effective_status"] = str(data.get("demand_status") or "open").lower()
+                data["can_reply"] = data["effective_status"] == "open"
                 mark_offer_thread_as_read(cur, offer_id, viewer_user_id, data["demand_owner_user_id"], data["supplier_user_id"])
                 cur.execute(
                     """
@@ -1816,6 +1937,8 @@ def create_offer_message(offer_id: int, sender_user_id: int, body: str) -> bool:
                 cur.execute(
                     """
                     SELECT o.id, d.user_id AS demand_owner_user_id, o.supplier_user_id
+                           , d.status AS demand_status, d.expires_at,
+                           (d.expires_at IS NULL OR d.expires_at > NOW()) AS demand_is_active
                     FROM offers o
                     JOIN demands d ON d.id = o.demand_id
                     WHERE o.id = %s
@@ -1826,6 +1949,10 @@ def create_offer_message(offer_id: int, sender_user_id: int, body: str) -> bool:
                 if not row:
                     return False
                 if sender_user_id not in {row["demand_owner_user_id"], row["supplier_user_id"]}:
+                    return False
+                if row["demand_status"] != "open":
+                    return False
+                if not row["demand_is_active"]:
                     return False
 
                 cur.execute(
@@ -1879,19 +2006,159 @@ def delete_demand(demand_id: int, telegram_user_id: int) -> bool:
 
 
 def delete_web_demand(demand_id: int, user_id: int) -> bool:
-    """Borra una demanda web abierta si pertenece al usuario."""
+    """Marca una demanda como eliminada si pertenece al usuario."""
     conn = _get_connection()
     try:
         with conn:
             with conn.cursor() as cur:
+                _expire_open_demands(cur)
                 cur.execute(
                     """
-                    DELETE FROM demands
-                    WHERE id = %s AND user_id = %s AND status = 'open'
+                    UPDATE demands
+                    SET status = 'deleted',
+                        is_pinned = FALSE
+                    WHERE id = %s AND user_id = %s AND status <> 'deleted'
                     """,
                     (demand_id, user_id),
                 )
                 return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def update_web_demand_lifecycle(user_id: int, demand_id: int, action: str) -> bool:
+    conn = _get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                _expire_open_demands(cur)
+                normalized_action = (action or "").strip().lower()
+                if normalized_action == "pause":
+                    cur.execute(
+                        """
+                        UPDATE demands
+                        SET status = 'paused'
+                        WHERE id = %s
+                          AND user_id = %s
+                          AND status = 'open'
+                          AND (expires_at IS NULL OR expires_at > NOW())
+                        """,
+                        (demand_id, user_id),
+                    )
+                    return cur.rowcount > 0
+                if normalized_action == "reactivate":
+                    cur.execute(
+                        """
+                        UPDATE demands
+                        SET status = 'open'
+                        WHERE id = %s
+                          AND user_id = %s
+                          AND status = 'paused'
+                          AND (expires_at IS NULL OR expires_at > NOW())
+                        """,
+                        (demand_id, user_id),
+                    )
+                    return cur.rowcount > 0
+                if normalized_action == "delete":
+                    cur.execute(
+                        """
+                        UPDATE demands
+                        SET status = 'deleted',
+                            is_pinned = FALSE
+                        WHERE id = %s
+                          AND user_id = %s
+                          AND status <> 'deleted'
+                        """,
+                        (demand_id, user_id),
+                    )
+                    return cur.rowcount > 0
+                if normalized_action == "pin":
+                    cur.execute(
+                        """
+                        UPDATE demands
+                        SET is_pinned = TRUE
+                        WHERE id = %s
+                          AND user_id = %s
+                          AND status <> 'deleted'
+                        """,
+                        (demand_id, user_id),
+                    )
+                    return cur.rowcount > 0
+                if normalized_action == "unpin":
+                    cur.execute(
+                        """
+                        UPDATE demands
+                        SET is_pinned = FALSE
+                        WHERE id = %s
+                          AND user_id = %s
+                        """,
+                        (demand_id, user_id),
+                    )
+                    return cur.rowcount > 0
+                return False
+    finally:
+        conn.close()
+
+
+def update_supplier_offer_workspace(user_id: int, offer_id: int, action: str) -> bool:
+    conn = _get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                normalized_action = (action or "").strip().lower()
+                if normalized_action == "hide":
+                    cur.execute(
+                        """
+                        UPDATE offers
+                        SET supplier_hidden = TRUE,
+                            supplier_is_pinned = FALSE,
+                            updated_at = NOW()
+                        WHERE id = %s
+                          AND supplier_user_id = %s
+                          AND supplier_hidden = FALSE
+                        """,
+                        (offer_id, user_id),
+                    )
+                    return cur.rowcount > 0
+                if normalized_action == "unhide":
+                    cur.execute(
+                        """
+                        UPDATE offers
+                        SET supplier_hidden = FALSE,
+                            updated_at = NOW()
+                        WHERE id = %s
+                          AND supplier_user_id = %s
+                          AND supplier_hidden = TRUE
+                        """,
+                        (offer_id, user_id),
+                    )
+                    return cur.rowcount > 0
+                if normalized_action == "pin":
+                    cur.execute(
+                        """
+                        UPDATE offers
+                        SET supplier_is_pinned = TRUE,
+                            updated_at = NOW()
+                        WHERE id = %s
+                          AND supplier_user_id = %s
+                          AND supplier_hidden = FALSE
+                        """,
+                        (offer_id, user_id),
+                    )
+                    return cur.rowcount > 0
+                if normalized_action == "unpin":
+                    cur.execute(
+                        """
+                        UPDATE offers
+                        SET supplier_is_pinned = FALSE,
+                            updated_at = NOW()
+                        WHERE id = %s
+                          AND supplier_user_id = %s
+                        """,
+                        (offer_id, user_id),
+                    )
+                    return cur.rowcount > 0
+                return False
     finally:
         conn.close()
 

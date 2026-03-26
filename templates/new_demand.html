@@ -3,19 +3,30 @@
 {% block content %}
 {% set wizard_step = active_wizard.step if active_wizard else "text" %}
 {% set is_published_step = wizard_step == "review" %}
+{% set is_auth_gate = is_published_step and active_wizard.awaiting_auth %}
 <section class="form-layout">
   <article class="card form-card">
+    <div class="wizard-page-topline">
+      <span class="pill soft">Paso {% if wizard_step == "text" %}1{% elif wizard_step == "questions" %}2{% else %}3{% endif %} de 3</span>
+      <span class="small-note">{% if wizard_step == "text" %}Texto libre{% elif wizard_step == "questions" %}Detalles guiados{% else %}{% if is_auth_gate %}Publicación y acceso{% else %}Demanda publicada{% endif %}{% endif %}</span>
+    </div>
     <h1>
-      {% if is_published_step %}
+      {% if is_auth_gate %}
+        Tu demanda está lista para publicarse
+      {% elif is_published_step %}
         Enhorabuena! Demanda Publicada
       {% elif wizard_step == "questions" %}
         Detalles adicionales
       {% else %}
-        {{ page_title or "Publica una d" }}
+        {{ page_title or "Publica una demanda" }}
       {% endif %}
     </h1>
-    {% if is_published_step %}
+    {% if is_auth_gate %}
+      <p class="muted">Tu demanda ya está estructurada. Solo falta crear tu cuenta o iniciar sesión para publicarla y empezar a recibir respuestas.</p>
+    {% elif is_published_step %}
       <p class="muted">{{ active_wizard.published_message or "Prepárate para recibir propuestas de personas y empresas interesadas." }}</p>
+    {% elif page_note %}
+      <p class="muted">{{ page_note }}</p>
     {% endif %}
 
     {% if edit_demand %}
@@ -46,7 +57,27 @@
     {% elif wizard_step == "questions" %}
       {% if debug_normalization and active_wizard.intent_domain and active_wizard.intent_type %}
         <section class="debug-inferred-panel">
-          <span class="detail-label">Esquema inferido</span>
+          <div class="debug-inferred-head">
+            <span class="detail-label">Esquema inferido</span>
+            <div class="debug-inferred-actions">
+              <button
+                type="button"
+                class="debug-json-trigger inline-debug-trigger"
+                data-json-target="inferred-intent-schema-json"
+                data-json-title="Intent schema JSON · {{ active_wizard.schema_display_name }}"
+              >
+                View JSON
+              </button>
+              <a
+                href="{{ active_wizard.intent_schema_admin_url }}"
+                class="debug-json-trigger inline-debug-trigger"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Edit intent_type
+              </a>
+            </div>
+          </div>
           <div class="debug-inferred-path">
             {{ active_wizard.schema_domain_display_name }} &gt; {{ active_wizard.schema_display_name }}
           </div>
@@ -58,6 +89,7 @@
               </div>
             {% endfor %}
           </div>
+          <script type="application/json" id="inferred-intent-schema-json">{{ active_wizard.intent_schema_json | tojson }}</script>
         </section>
       {% endif %}
 
@@ -91,6 +123,7 @@
               {% for entry in required_fields %}
                 <label
                   class="question-card {{ 'question-card-error' if entry.issue_message else '' }}"
+                  data-entry-field="{{ entry.field_name }}"
                   data-conditional-entry="{{ '1' if entry.conditional_rule else '0' }}"
                   {% if entry.conditional_rule %}
                     data-conditional-field="{{ entry.conditional_rule['field'] }}"
@@ -180,7 +213,7 @@
             </div>
             <div class="questionnaire-grid">
               {% for entry in optional_fields %}
-                <label class="question-card {{ 'question-card-error' if entry.issue_message else '' }}">
+                <label class="question-card {{ 'question-card-error' if entry.issue_message else '' }}" data-entry-field="{{ entry.field_name }}">
                   <span class="question-card-head">
                     <strong>{{ entry.question }}</strong>
                   </span>
@@ -273,29 +306,59 @@
         </div>
       </div>
 
-      <div class="wizard-actions">
-        <a href="/my-demands" class="button button-secondary">Ir a Mis Demandas</a>
-        <a href="/" class="button button-primary">Ver todas</a>
-      </div>
+      {% if is_auth_gate %}
+        <div class="signup-gate-grid">
+          <section class="auth-gate-panel">
+            <span class="detail-label">Crear cuenta y publicar</span>
+            <form action="/signup" method="post" class="form-stack">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <label>
+                <span>Nombre completo</span>
+                <input type="text" name="full_name" placeholder="Tu nombre" required>
+              </label>
+              <label>
+                <span>Email</span>
+                <input type="email" name="email" placeholder="tu@email.com" required>
+              </label>
+              <label>
+                <span>Contraseña</span>
+                <input type="password" name="password" placeholder="Mínimo 8 caracteres" required>
+              </label>
+              <label>
+                <span>Repite la contraseña</span>
+                <input type="password" name="password_confirm" placeholder="Repite tu contraseña" required>
+              </label>
+              <button type="submit" class="button button-primary full-width">Crear cuenta y publicar</button>
+            </form>
+          </section>
+
+          <section class="auth-gate-panel auth-gate-panel-secondary">
+            <span class="detail-label">Ya tengo cuenta</span>
+            <form action="/login" method="post" class="form-stack">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <label>
+                <span>Email</span>
+                <input type="email" name="email" placeholder="tu@email.com" required>
+              </label>
+              <label>
+                <span>Contraseña</span>
+                <input type="password" name="password" placeholder="Tu contraseña" required>
+              </label>
+              <button type="submit" class="button button-ghost full-width">Acceder y publicar</button>
+            </form>
+          </section>
+        </div>
+      {% else %}
+        <div class="wizard-actions">
+          <a href="/" class="button button-secondary">Seguir explorando</a>
+          <a href="/app/chats" class="button button-primary">Ir a mis chats</a>
+        </div>
+      {% endif %}
     {% endif %}
   </article>
 </section>
 
 <script>
-  document.querySelectorAll('.js-busy-form').forEach((form) => {
-    form.addEventListener('submit', (event) => {
-      const button = event.submitter || form.querySelector('button[type="submit"]');
-      if (!button) return;
-      form.classList.add('is-submitting');
-      button.disabled = true;
-      button.classList.add('is-busy');
-      const label = button.querySelector('.button-label');
-      if (label && button.dataset.busyText) {
-        label.textContent = button.dataset.busyText;
-      }
-    });
-  });
-
   function nextDayIso(isoDate) {
     const parts = String(isoDate || '').split('-');
     if (parts.length !== 3) return '';
@@ -383,6 +446,25 @@
   function syncConditionalRequiredFields(form) {
     form.querySelectorAll('[data-conditional-entry="1"]').forEach((card) => {
       const active = conditionalRuleMatches(form, card);
+      if (active) {
+        const sourceField = card.dataset.conditionalField || '';
+        const sourceCard = sourceField ? form.querySelector(`.question-card[data-entry-field="${sourceField}"]`) : null;
+        const container = card.parentElement;
+        if (sourceCard && container && sourceCard.parentElement === container) {
+          let anchor = sourceCard;
+          while (
+            anchor.nextElementSibling &&
+            anchor.nextElementSibling !== card &&
+            anchor.nextElementSibling.matches('.question-card[data-conditional-entry="1"]') &&
+            anchor.nextElementSibling.dataset.conditionalField === sourceField
+          ) {
+            anchor = anchor.nextElementSibling;
+          }
+          if (anchor.nextElementSibling !== card) {
+            container.insertBefore(card, anchor.nextElementSibling);
+          }
+        }
+      }
       card.hidden = !active;
       card.querySelectorAll('[data-required-when-active="1"]').forEach((input) => {
         if (active) {

@@ -1,9 +1,72 @@
 {% extends "base.html" %}
 
 {% block content %}
-<section class="section-head">
+{% if not current_user %}
+  <section class="hero-home">
+    <div class="hero-home-copy card">
+      <p class="eyebrow">Marketplace de intención</p>
+      <h1>Encuentra quien te ayude o encuentra clientes listos para hablar.</h1>
+      <p class="hero-text">Publica lo que necesitas en un minuto o responde a demandas reales filtrando por categoría, zona y presupuesto.</p>
+      <div class="hero-actions">
+        <a href="/demands/new?fresh=1" class="button button-primary">Quiero publicar una demanda</a>
+        <a href="#explorar-demandas" class="button button-ghost">Quiero ver demandas</a>
+      </div>
+      <div class="hero-mini-points">
+        <span>Sin formularios largos al empezar</span>
+        <span>Contacto directo entre demandante y ofertante</span>
+      </div>
+    </div>
+
+    <div class="hero-home-composer card">
+      <p class="detail-label">Empieza gratis</p>
+      <form action="/demands" method="post" class="form-stack js-busy-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <textarea name="demand_text" rows="6" placeholder="Ej.: Busco clases particulares de clarinete en Barcelona..." required></textarea>
+        <button type="submit" class="button button-primary" data-busy-text="Analizando tu demanda...">
+          <span class="button-label">Publicar mi primera demanda</span>
+          <span class="button-spinner" aria-hidden="true"></span>
+        </button>
+        <p class="small-note">No te pediremos registro hasta el final del proceso. El análisis puede tardar unos segundos.</p>
+      </form>
+    </div>
+  </section>
+
+  <section class="dual-entry-strip">
+    <article class="card entry-card">
+      <p class="eyebrow">Para quien necesita algo</p>
+      <h2>Describe tu necesidad y recibe respuestas.</h2>
+      <ol class="entry-steps">
+        <li>Escribe tu necesidad en un cuadro de texto.</li>
+        <li>Completa solo los detalles imprescindibles.</li>
+        <li>Recibe ofertas y conversa directamente.</li>
+      </ol>
+      <a href="/demands/new?fresh=1" class="button button-ghost">Publicar demanda</a>
+    </article>
+
+    <article class="card entry-card">
+      <p class="eyebrow">Para quien vende u ofrece</p>
+      <h2>Explora oportunidades reales y contacta rápido.</h2>
+      <ol class="entry-steps">
+        <li>Consulta demandas recientes con presupuesto visible.</li>
+        <li>Filtra por ubicación, categoría o texto.</li>
+        <li>Responde y pasa a conversar por chat.</li>
+      </ol>
+      <a href="#explorar-demandas" class="button button-ghost">Explorar demandas</a>
+    </article>
+  </section>
+{% endif %}
+
+<section class="section-head" id="explorar-demandas">
   <div>
-    <h1>Últimas Demandas Publicadas</h1>
+    {% if current_user %}
+      <p class="eyebrow">Explorar</p>
+      <h1>Demandas publicadas</h1>
+      <p class="section-note">Filtra, detecta oportunidades y responde rápido desde una vista limpia.</p>
+    {% else %}
+      <p class="eyebrow">Explorar</p>
+      <h1>Últimas demandas publicadas</h1>
+      <p class="section-note">Una vista clara para detectar oportunidades reales y responder en pocos clics.</p>
+    {% endif %}
   </div>
 </section>
 
@@ -266,28 +329,15 @@
         </div>
       {% endif %}
 
-      <details class="demand-feed-actions">
-        <summary class="button button-ghost compact-pill">Ver y responder</summary>
-        <div class="inline-demand-detail">
-          <p class="muted">{{ demand.attributes.get("description", demand_text) }}</p>
-          {% if current_user %}
-            {% if demand.user_id == current_user.id %}
-              <div class="small-note">No puedes responder a una demanda publicada por ti mismo.</div>
-            {% elif demand.viewer_has_offer %}
-              <a href="/my-offers?selected_offer_id={{ demand.viewer_offer_id }}" class="button button-primary">Ir a la conversación</a>
-            {% else %}
-              <form action="/demands/{{ demand.id }}/offers" method="post" class="form-stack compact-offer-form">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <input type="hidden" name="redirect_to" value="/#demand-{{ demand.id }}">
-                <textarea name="message" rows="3" placeholder="Escribe tu oferta..." required></textarea>
-                <button type="submit" class="button button-primary compact-send">Enviar oferta</button>
-              </form>
-            {% endif %}
-          {% else %}
-            <a href="/login" class="button button-primary">Accede para ofertar</a>
+      <div class="demand-feed-actions">
+        <p class="muted demand-feed-description">{{ demand.attributes.get("description", demand_text)[:110] }}{% if (demand.attributes.get("description", demand_text)|length) > 110 %}...{% endif %}</p>
+        <div class="demand-feed-action-row">
+          <a href="/demands/{{ demand.id }}" class="button button-primary">Ver detalle</a>
+          {% if current_user and demand.viewer_has_offer %}
+            <a href="/app/chats?offer_id={{ demand.viewer_offer_id }}" class="button button-ghost">Ir al chat</a>
           {% endif %}
         </div>
-      </details>
+      </div>
 
       {% if debug_normalization %}
         <script type="application/json" id="normalized-demand-{{ demand.id }}">{{ demand.normalized_payload | tojson }}</script>
@@ -314,6 +364,32 @@
       <a href="{{ pagination.next_url }}" class="button button-ghost">Siguiente</a>
     {% endif %}
   </nav>
+{% endif %}
+
+{% if not current_user %}
+  <section class="how-it-works-inline">
+    <div class="section-head compact">
+      <div>
+        <p class="eyebrow">Cómo funciona</p>
+        <h2>Una mecánica simple para los dos lados del marketplace</h2>
+      </div>
+      <a href="/how-it-works" class="button button-ghost">Ver explicación completa</a>
+    </div>
+    <div class="steps-grid">
+      <article class="card step-card">
+        <strong>1. Publicas lo que necesitas</strong>
+        <p class="muted">Empiezas con texto libre y solo completamos los detalles importantes.</p>
+      </article>
+      <article class="card step-card">
+        <strong>2. Otros usuarios detectan tu demanda</strong>
+        <p class="muted">La encuentran por filtros de precio, zona, categoría o texto.</p>
+      </article>
+      <article class="card step-card">
+        <strong>3. Empezáis a hablar</strong>
+        <p class="muted">La negociación ya sucede en una conversación directa dentro de la app.</p>
+      </article>
+    </div>
+  </section>
 {% endif %}
 
 <script>

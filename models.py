@@ -188,6 +188,12 @@ class PublicDemand(BaseModel):
     budget_max: Optional[float] = None
     urgency: Optional[str] = None
     status: str = "open"
+    effective_status: str = "open"
+    is_pinned: bool = False
+    can_pause: bool = False
+    can_reactivate: bool = False
+    can_delete: bool = False
+    can_pin: bool = False
     offer_count: int = 0
     owner_name: Optional[str] = None
     expires_at: Optional[datetime] = None

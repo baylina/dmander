@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="section-head">
+  <div>
+    <p class="eyebrow">Cómo funciona</p>
+    <h1>Una plataforma para encontrar oferta y demanda real en pocos pasos.</h1>
+    <p class="section-note">DMANDER conecta a quien necesita algo con quien puede ofrecerlo, sin formularios eternos ni navegación confusa.</p>
+  </div>
+</section>
+
+<section class="how-layout">
+  <article class="card info-panel">
+    <p class="eyebrow">Si necesitas algo</p>
+    <h2>Publica tu demanda como si escribieras un mensaje.</h2>
+    <ol class="entry-steps">
+      <li>Empiezas con una frase libre.</li>
+      <li>La plataforma detecta la categoría y te pide solo lo importante.</li>
+      <li>Recibes respuestas y pasas a conversar directamente.</li>
+    </ol>
+    <a href="/demands/new?fresh=1" class="button button-primary">Publicar una demanda</a>
+  </article>
+
+  <article class="card info-panel">
+    <p class="eyebrow">Si vendes u ofreces servicios</p>
+    <h2>Filtra demandas recientes y responde solo a las que te encajan.</h2>
+    <ol class="entry-steps">
+      <li>Exploras demandas por texto, ubicación o categoría.</li>
+      <li>Ves el precio o rango de precios con claridad.</li>
+      <li>Respondes y la conversación continúa en el chat privado.</li>
+    </ol>
+    <a href="/" class="button button-ghost">Explorar demandas</a>
+  </article>
+</section>
+
+<section class="steps-grid">
+  <article class="card step-card">
+    <strong>Texto libre</strong>
+    <p class="muted">La experiencia arranca con una sola caja de texto, sin obligarte a pensar primero en taxonomías complejas.</p>
+  </article>
+  <article class="card step-card">
+    <strong>Detalles guiados</strong>
+    <p class="muted">El paso 2 te pide ubicación, presupuesto o campos clave solo cuando realmente hacen falta.</p>
+  </article>
+  <article class="card step-card">
+    <strong>Conversación directa</strong>
+    <p class="muted">Cuando una oferta encaja, la negociación y el cierre pasan a una conversación simple y clara.</p>
+  </article>
+</section>
+{% endblock %}
