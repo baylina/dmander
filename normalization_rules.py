@@ -254,6 +254,11 @@ FIELD_PROMPTS = {
         "placeholder": "Ej.: presencial, online, a domicilio...",
         "examples": ["presencial", "online", "a domicilio"],
     },
+    "insurance_type": {
+        "question": "¿Qué tipo de seguro necesitas exactamente?",
+        "placeholder": "Ej.: hogar, coche, salud, moto, vida...",
+        "examples": ["hogar", "coche", "salud"],
+    },
 }
 
 FIELD_LABELS = {
@@ -312,6 +317,7 @@ FIELD_LABELS = {
     "stack": "tecnologías",
     "job_type": "tipo de trabajo",
     "service_mode": "modo del servicio",
+    "insurance_type": "tipo de seguro",
 }
 
 CITY_TO_COUNTRY = {
@@ -384,14 +390,15 @@ def get_field_prompt(
     raw_text: str = "",
     intent_type: str = "",
     intent_domain: str = "",
+    field_description: str = "",
 ) -> dict[str, Any]:
     normalized_field_name = str(field_name or "").strip()
     canonical_field_name = normalized_field_name.lower()
     language = _detect_prompt_language(raw_text)
     if language != "es":
-        prompt = _default_prompt_for_field(canonical_field_name, language=language)
+        prompt = _default_prompt_for_field(canonical_field_name, language=language, field_description=field_description)
         return prompt
-    prompt = FIELD_PROMPTS.get(canonical_field_name, _default_prompt_for_field(canonical_field_name))
+    prompt = FIELD_PROMPTS.get(canonical_field_name, _default_prompt_for_field(canonical_field_name, field_description=field_description))
     return _contextualize_prompt(dict(prompt), canonical_field_name, raw_text, intent_type, intent_domain)
 
 
@@ -525,9 +532,29 @@ def _normalize_key(value: str) -> str:
     )
 
 
-def _humanize_field_name(field_name: str) -> str:
+def _looks_like_technical_label(value: str) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return True
+    lowered = _normalize_key(text)
+    if "_" in text:
+        return True
+    if lowered in {"field", "text", "value", "option", "type"}:
+        return True
+    if lowered.count(" ") == 0 and lowered.isascii() and lowered not in FIELD_LABELS:
+        return True
+    return False
+
+
+def _humanize_field_name(field_name: str, field_description: str = "") -> str:
     normalized = str(field_name or "").strip()
-    return FIELD_LABELS.get(normalized, FIELD_LABELS.get(normalized.lower(), normalized.replace("_", " ").strip()))
+    explicit = FIELD_LABELS.get(normalized, FIELD_LABELS.get(normalized.lower()))
+    if explicit:
+        return explicit
+    description = str(field_description or "").strip()
+    if description and not _looks_like_technical_label(description):
+        return description
+    return normalized.replace("_", " ").strip()
 
 
 def _detect_prompt_language(raw_text: str) -> str:
@@ -554,8 +581,8 @@ def _detect_prompt_language(raw_text: str) -> str:
     return "es"
 
 
-def _default_prompt_for_field(field_name: str, language: str = "es") -> dict[str, Any]:
-    label = _humanize_field_name(field_name)
+def _default_prompt_for_field(field_name: str, language: str = "es", field_description: str = "") -> dict[str, Any]:
+    label = _humanize_field_name(field_name, field_description=field_description)
     lowered = field_name.lower()
     if language == "en":
         if lowered.startswith("budget_"):

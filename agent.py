@@ -172,6 +172,7 @@ class DemandAgent:
                 response.required_missing_fields,
                 response.recommended_missing_fields,
             )
+            schema = self.registry.resolve_intent_schema(response.intent_type)
             if (
                 not response.next_question
                 or self._looks_like_budget_question(response.next_question)
@@ -184,16 +185,19 @@ class DemandAgent:
                     state.original_text,
                     response.intent_type,
                     response.intent_domain,
+                    field_description=schema.field_spec(target).description,
                 )["question"]
         elif response.recommended_missing_fields and self._looks_like_budget_question(response.next_question or ""):
             first_recommended = self._select_next_missing_target([], response.recommended_missing_fields)
             if first_recommended:
+                schema = self.registry.resolve_intent_schema(response.intent_type)
                 response.next_question_field = first_recommended
                 response.next_question = get_field_prompt(
                     first_recommended,
                     state.original_text,
                     response.intent_type,
                     response.intent_domain,
+                    field_description=schema.field_spec(first_recommended).description,
                 )["question"]
 
         technical_field = self._detect_technical_field_in_question(
@@ -202,12 +206,14 @@ class DemandAgent:
             response.recommended_missing_fields,
         )
         if technical_field:
+            schema = self.registry.resolve_intent_schema(response.intent_type)
             response.next_question_field = technical_field
             response.next_question = get_field_prompt(
                 technical_field,
                 state.original_text,
                 response.intent_type,
                 response.intent_domain,
+                field_description=schema.field_spec(technical_field).description,
             )["question"]
 
         return response

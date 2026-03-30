@@ -377,10 +377,6 @@
         }
       }
 
-      const ownerCount = ownerDemands().length;
-      const supplierCount = supplierOffers().length;
-      if (activeRole === 'owner' && !ownerCount && supplierCount) activeRole = 'supplier';
-      if (activeRole === 'supplier' && !supplierCount && ownerCount) activeRole = 'owner';
       await renderWorkspace();
     };
 

@@ -290,6 +290,10 @@ def _augment_inferred_known_fields(schema, raw_text: str, known_fields: dict[str
             people = _infer_people_from_text(raw_text)
             if people is not None:
                 inferred[field_name] = people
+        if field_name == "insurance_type":
+            insurance_type = _infer_insurance_type_from_text(raw_text)
+            if insurance_type is not None:
+                inferred[field_name] = insurance_type
     _apply_budget_inference_from_text(raw_text, inferred)
     return inferred
 
@@ -408,6 +412,39 @@ def _infer_people_from_text(raw_text: str) -> Optional[int]:
             return parsed if parsed > 0 else None
         except ValueError:
             return None
+    return None
+
+
+def _infer_insurance_type_from_text(raw_text: str) -> Optional[str]:
+    lowered = (
+        str(raw_text or "")
+        .lower()
+        .replace("á", "a")
+        .replace("é", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ú", "u")
+    )
+    if "seguro" not in lowered:
+        return None
+    patterns: list[tuple[tuple[str, ...], str]] = [
+        (("hogar", "casa", "vivienda", "piso"), "hogar"),
+        (("coche", "auto", "vehiculo", "vehículo", "turismo"), "coche"),
+        (("moto", "motocicleta", "scooter"), "moto"),
+        (("salud", "medico", "médico", "sanitario"), "salud"),
+        (("vida",), "vida"),
+        (("viaje", "viajes"), "viaje"),
+        (("mascota", "perro", "gato"), "mascotas"),
+        (("comercio", "local", "negocio"), "comercio"),
+    ]
+    for tokens, insurance_type in patterns:
+        if any(token in lowered for token in tokens):
+            return insurance_type
+    match = re.search(r"seguro\s+de\s+([a-z0-9ñç·' -]+)", lowered)
+    if match:
+        candidate = match.group(1).strip(" .,;:")
+        if candidate:
+            return candidate
     return None
 
 

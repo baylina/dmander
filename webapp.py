@@ -16,6 +16,7 @@ import os
 import secrets
 import json
 import re
+from pathlib import Path
 from urllib.parse import quote
 from urllib.parse import urlencode
 from urllib.request import Request as UrlRequest, urlopen
@@ -100,6 +101,8 @@ except ImportError:  # pragma: no cover - depende de requirements
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
+RUNTIME_DIR = Path(BASE_DIR) / ".runtime"
+GUEST_WIZARDS_DIR = RUNTIME_DIR / "guest_wizards"
 
 SELECT_FIELD_OPTIONS: dict[str, list[dict[str, str]]] = {
     "modality": [
@@ -1127,7 +1130,7 @@ def build_app() -> FastAPI:
             return _redirect(target)
 
         _flash(request, "Tu oferta ha quedado registrada.", "success")
-        return _redirect(f"/app/chats?offer_id={offer.id}")
+        return _redirect(f"/app/chats?role=supplier&offer_id={offer.id}")
 
     @app.get("/offers/{offer_id}", response_class=HTMLResponse)
     async def offer_thread_page(request: Request, offer_id: int) -> RedirectResponse:
@@ -1135,7 +1138,7 @@ def build_app() -> FastAPI:
         if not user:
             _flash(request, "Necesitas iniciar sesión para ver esta conversación.", "error")
             return _redirect("/login")
-        return _redirect(f"/app/chats?offer_id={offer_id}")
+        return _redirect(f"/app/chats?role=supplier&offer_id={offer_id}")
 
     @app.post("/offers/{offer_id}/messages")
     async def offer_message_route(
@@ -2389,12 +2392,14 @@ def _build_local_review_response(state: SessionState) -> tuple[LLMResponse, Dema
         response.enough_information = False
     elif draft.required_missing_fields:
         target = draft.required_missing_fields[0]
+        draft_schema = get_master_schema_registry().resolve_intent_schema(draft.intent_type)
         response.next_question_field = target
         response.next_question = get_field_prompt(
             target,
             state.original_text,
             draft.intent_type,
             draft.intent_domain,
+            field_description=draft_schema.field_spec(target).description,
         )["question"]
         response.enough_information = False
     return response, draft
@@ -2966,7 +2971,13 @@ def _prompt_for_entry(field_name: str, raw_text: str, schema, optional: bool = F
         return _budget_prompt_for_schema(raw_text, schema, optional=optional)
     if field_name == "location_value":
         return _location_prompt_for_schema(raw_text, schema, optional=optional)
-    prompt = get_field_prompt(field_name, raw_text, schema.intent_type, schema.intent_domain)
+    prompt = get_field_prompt(
+        field_name,
+        raw_text,
+        schema.intent_type,
+        schema.intent_domain,
+        field_description=schema.field_spec(field_name).description,
+    )
     if optional:
         prompt["question"] = f"{prompt['question']} (Opcional)"
     return prompt
@@ -2998,7 +3009,13 @@ def _budget_prompt_for_schema(raw_text: str, schema, optional: bool = False) -> 
 
 
 def _location_prompt_for_schema(raw_text: str, schema, optional: bool = False) -> dict[str, Any]:
-    base = get_field_prompt("location_value", raw_text, schema.intent_type, schema.intent_domain)
+    base = get_field_prompt(
+        "location_value",
+        raw_text,
+        schema.intent_type,
+        schema.intent_domain,
+        field_description="ubicación",
+    )
     question = base["question"]
     if optional:
         question = f"{question} (Opcional)"
@@ -3355,7 +3372,13 @@ def _demand_detail_answered_fields(demand: dict[str, Any]) -> list[dict[str, str
         if field_name in seen or field_name in excluded or not _has_content(value):
             return
         control = _field_control(field_name, value, schema.intent_type, schema.intent_domain, raw_text)
-        question = get_field_prompt(field_name, raw_text, schema.intent_type, schema.intent_domain).get("question", field_name)
+        question = get_field_prompt(
+            field_name,
+            raw_text,
+            schema.intent_type,
+            schema.intent_domain,
+            field_description=schema.field_spec(field_name).description,
+        ).get("question", field_name)
         entries.append(
             {
                 "field_name": field_name,
@@ -3668,24 +3691,60 @@ def _guest_wizard_session_key() -> str:
     return "guest_demand_wizard"
 
 
+def _guest_wizard_storage_key() -> str:
+    return "guest_demand_wizard_id"
+
+
+def _guest_wizard_file_path(request: Request, create: bool = False) -> Path | None:
+    storage_id = request.session.get(_guest_wizard_storage_key())
+    if not storage_id and create:
+        storage_id = secrets.token_urlsafe(18)
+        request.session[_guest_wizard_storage_key()] = storage_id
+    if not storage_id:
+        return None
+    GUEST_WIZARDS_DIR.mkdir(parents=True, exist_ok=True)
+    return GUEST_WIZARDS_DIR / f"{storage_id}.json"
+
+
 def _load_demand_wizard(request: Request, user_id: int | None = None) -> Optional[dict[str, Any]]:
     if user_id is not None:
         return get_demand_wizard_record(user_id)
-    payload = request.session.get(_guest_wizard_session_key())
-    return dict(payload) if isinstance(payload, dict) else None
+    path = _guest_wizard_file_path(request)
+    if path and path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+    legacy_payload = request.session.get(_guest_wizard_session_key())
+    if isinstance(legacy_payload, dict):
+        _save_demand_wizard(request, None, dict(legacy_payload))
+        request.session.pop(_guest_wizard_session_key(), None)
+        return dict(legacy_payload)
+    return None
 
 
 def _save_demand_wizard(request: Request, user_id: int | None, wizard: dict[str, Any]) -> None:
     if user_id is not None:
         save_demand_wizard_record(user_id, wizard)
         return
-    request.session[_guest_wizard_session_key()] = wizard
+    path = _guest_wizard_file_path(request, create=True)
+    if not path:
+        return
+    path.write_text(json.dumps(wizard, ensure_ascii=False), encoding="utf-8")
+    request.session.pop(_guest_wizard_session_key(), None)
 
 
 def _clear_demand_wizard(request: Request, user_id: int | None) -> None:
     if user_id is not None:
         clear_demand_wizard_record(user_id)
         return
+    path = _guest_wizard_file_path(request)
+    if path and path.exists():
+        try:
+            path.unlink()
+        except OSError:
+            pass
+    request.session.pop(_guest_wizard_storage_key(), None)
     request.session.pop(_guest_wizard_session_key(), None)
 
 
@@ -3703,8 +3762,8 @@ def _complete_pending_guest_publication(request: Request, user: Any) -> str | No
     return "/app/chats"
 
 
-def _field_display_label(field_name: str) -> str:
-    question = get_field_prompt(field_name).get("question", "")
+def _field_display_label(field_name: str, field_description: str = "") -> str:
+    question = get_field_prompt(field_name, field_description=field_description).get("question", "")
     normalized = question.strip().strip("¿").strip("?").strip()
     if normalized:
         return normalized[:1].lower() + normalized[1:]

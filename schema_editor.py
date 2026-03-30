@@ -226,11 +226,25 @@ def normalize_editable_schema(raw_schema: dict[str, Any]) -> dict[str, Any]:
 
 def schema_editor_context() -> dict[str, Any]:
     normalized = load_editable_schema()
-    domains = normalized.get("domains", [])
+    raw_domains = normalized.get("domains", [])
+    domains = sorted(
+        deepcopy(raw_domains),
+        key=lambda item: (
+            str(item.get("name") or "").strip().lower(),
+            str(item.get("code") or "").strip().lower(),
+        ),
+    )
     grouped_domains = []
     for domain in domains:
+        sorted_intents = sorted(
+            list(domain.get("intent_types", []) or []),
+            key=lambda item: (
+                str(item.get("display_name") or "").strip().lower(),
+                str(item.get("intent_type") or "").strip().lower(),
+            ),
+        )
         intent_types = []
-        for item in domain.get("intent_types", []) or []:
+        for item in sorted_intents:
             system = _extract_system_policies(item)
             intent_types.append(
                 {

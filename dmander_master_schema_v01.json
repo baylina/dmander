@@ -554,8 +554,8 @@
                 "value": ""
               },
               "validation": {
-                "min_length": 0,
-                "max_length": 300
+                "max_length": 300,
+                "min_length": 0
               }
             },
             {
@@ -569,8 +569,8 @@
                 "value": ""
               },
               "validation": {
-                "min_length": 0,
-                "max_length": 300
+                "max_length": 300,
+                "min_length": 0
               }
             }
           ],
@@ -5164,203 +5164,6 @@
           "examples": [
             "Quiero alquilar furgoneta"
           ]
-        },
-        {
-          "intent_domain": "rentals",
-          "intent_type": "rent_home",
-          "display_name": "Alquiler de vivienda habitual",
-          "fields": [
-            {
-              "name": "_location",
-              "type": "System Location",
-              "description": "Ubicación de la demanda",
-              "required": "always",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {}
-            },
-            {
-              "name": "_budget",
-              "type": "System Budget",
-              "description": "Presupuesto de la demanda",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "fix_or_range": "fix",
-              "unit": "monthly",
-              "validation": {
-                "min": "",
-                "max": ""
-              }
-            },
-            {
-              "name": "area",
-              "type": "Texto",
-              "description": "superficie",
-              "required": "always",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min_length": 1,
-                "max_length": 300
-              }
-            },
-            {
-              "name": "monthly_budget_max",
-              "type": "Importe en Euros",
-              "description": "monthly budget max",
-              "required": "always",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1.0
-              }
-            },
-            {
-              "name": "rooms",
-              "type": "Numero Entero",
-              "description": "habitaciones",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1
-              }
-            },
-            {
-              "name": "furnished",
-              "type": "Booleano",
-              "description": "furnished",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {}
-            },
-            {
-              "name": "move_in_date",
-              "type": "Fecha",
-              "description": "move in date",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {}
-            }
-          ],
-          "examples": [
-            "Busco piso de alquiler en Sant Cugat"
-          ]
-        },
-        {
-          "intent_domain": "rentals",
-          "intent_type": "rent_holiday_home",
-          "display_name": "Alquiler vacacional",
-          "fields": [
-            {
-              "name": "_location",
-              "type": "System Location",
-              "description": "Ubicación de la demanda",
-              "required": "always",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {}
-            },
-            {
-              "name": "_budget",
-              "type": "System Budget",
-              "description": "Presupuesto de la demanda",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "fix_or_range": "fix",
-              "unit": "one-time",
-              "validation": {
-                "min": "",
-                "max": ""
-              }
-            },
-            {
-              "name": "destination",
-              "type": "Ubicacion",
-              "description": "destino",
-              "required": "always",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {}
-            },
-            {
-              "name": "dates",
-              "type": "Fecha",
-              "description": "fechas",
-              "required": "always",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {}
-            },
-            {
-              "name": "people",
-              "type": "Numero Entero",
-              "description": "personas",
-              "required": "always",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1
-              }
-            },
-            {
-              "name": "rooms",
-              "type": "Numero Entero",
-              "description": "habitaciones",
-              "required": "never",
-              "when": {
-                "field": "",
-                "operator": "equals",
-                "value": ""
-              },
-              "validation": {
-                "min": 1
-              }
-            }
-          ],
-          "examples": [
-            "Quiero alquilar casa en la Costa Brava"
-          ]
         }
       ]
     },
@@ -5698,6 +5501,112 @@
           "examples": [
             "Vendo casa unifamiliar"
           ]
+        },
+        {
+          "intent_domain": "residential_real_estate",
+          "intent_type": "rent_home",
+          "display_name": "Alquiler de vivienda habitual",
+          "fields": [
+            {
+              "name": "_location",
+              "type": "System Location",
+              "description": "Ubicación de la demanda",
+              "required": "always",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "validation": {}
+            },
+            {
+              "name": "_budget",
+              "type": "System Budget",
+              "description": "Presupuesto de la demanda",
+              "required": "never",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "fix_or_range": "fix",
+              "unit": "monthly",
+              "validation": {
+                "min": "",
+                "max": ""
+              }
+            },
+            {
+              "name": "area",
+              "type": "Texto",
+              "description": "superficie",
+              "required": "always",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "validation": {
+                "min_length": 1,
+                "max_length": 300
+              }
+            },
+            {
+              "name": "monthly_budget_max",
+              "type": "Importe en Euros",
+              "description": "monthly budget max",
+              "required": "always",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "validation": {
+                "min": 1.0
+              }
+            },
+            {
+              "name": "furnished",
+              "type": "Booleano",
+              "description": "furnished",
+              "required": "never",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "validation": {}
+            },
+            {
+              "name": "move_in_date",
+              "type": "Fecha",
+              "description": "move in date",
+              "required": "never",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "validation": {}
+            },
+            {
+              "name": "rooms",
+              "type": "Numero Entero",
+              "description": "habitaciones",
+              "required": "never",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "validation": {
+                "min": 1
+              }
+            }
+          ],
+          "examples": [
+            "Busco piso de alquiler en Sant Cugat"
+          ]
         }
       ]
     },
@@ -5923,6 +5832,97 @@
           ],
           "examples": [
             "Busco apartamento para inversión vacacional"
+          ]
+        },
+        {
+          "intent_domain": "vacation_real_estate",
+          "intent_type": "rent_holiday_home",
+          "display_name": "Alquiler vacacional",
+          "fields": [
+            {
+              "name": "_location",
+              "type": "System Location",
+              "description": "Ubicación de la demanda",
+              "required": "always",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "validation": {}
+            },
+            {
+              "name": "_budget",
+              "type": "System Budget",
+              "description": "Presupuesto de la demanda",
+              "required": "never",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "fix_or_range": "fix",
+              "unit": "one-time",
+              "validation": {
+                "min": "",
+                "max": ""
+              }
+            },
+            {
+              "name": "dates",
+              "type": "Fecha",
+              "description": "fechas",
+              "required": "always",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "validation": {}
+            },
+            {
+              "name": "destination",
+              "type": "Ubicacion",
+              "description": "destino",
+              "required": "always",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "validation": {}
+            },
+            {
+              "name": "people",
+              "type": "Numero Entero",
+              "description": "personas",
+              "required": "always",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "validation": {
+                "min": 1
+              }
+            },
+            {
+              "name": "rooms",
+              "type": "Numero Entero",
+              "description": "habitaciones",
+              "required": "never",
+              "when": {
+                "field": "",
+                "operator": "equals",
+                "value": ""
+              },
+              "validation": {
+                "min": 1
+              }
+            }
+          ],
+          "examples": [
+            "Quiero alquilar casa en la Costa Brava"
           ]
         }
       ]
