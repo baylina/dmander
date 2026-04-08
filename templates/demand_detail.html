@@ -2,8 +2,8 @@
 
 {% block content %}
 {% set budget_view = demand_budget_display(demand) %}
-{% set demand_text = demand.normalized_payload.raw_text or demand.attributes.get("description", demand.summary) %}
-{% set has_geo_location = demand.location_json and (demand.location_json.geojson or demand.location_json.bbox or (demand.location_json.center and demand.location_json.center.lat is not none and demand.location_json.center.lon is not none)) %}
+{% set demand_text = demand.original_text or demand.normalized_payload.raw_text or demand.attributes.get("description", demand.summary) %}
+{% set has_geo_location = demand.location_json and demand.location_json.center and demand.location_json.center.lat is not none and demand.location_json.center.lon is not none %}
 <section class="detail-breadcrumb">
   <a href="/" class="button button-ghost">&larr; Volver a explorar</a>
 </section>
@@ -61,20 +61,6 @@
       </div>
     {% endif %}
 
-    {% if detail_entries %}
-      <section class="detail-attributes">
-        <h2>Preguntas y respuestas de la publicación</h2>
-        <div class="detail-attributes-grid">
-          {% for item in detail_entries %}
-            <div class="detail-attribute-item">
-              <span class="detail-label">{{ item.question }}</span>
-              <strong>{{ item.answer }}</strong>
-            </div>
-          {% endfor %}
-        </div>
-      </section>
-    {% endif %}
-
     <div class="detail-grid detail-grid-modern">
       <div class="detail-info-card">
         <span class="detail-label">Publicado por</span>
@@ -88,7 +74,7 @@
       <div class="detail-info-card">
         <span class="detail-label">Estado</span>
         {% if current_user and demand.is_owner and demand.effective_status != "expired" %}
-          <form action="/demands/{{ demand.id }}/lifecycle" method="post" class="detail-status-form">
+          <form action="/demands/{{ demand.public_id }}/lifecycle" method="post" class="detail-status-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <select name="action" class="detail-status-select" data-detail-status-select>
               {% if demand.effective_status == "open" %}
@@ -161,10 +147,10 @@
             {% if existing_thread.can_reply %}
               <form action="/offers/{{ existing_thread.id }}/messages" method="post" class="form-stack">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <input type="hidden" name="redirect_to" value="/demands/{{ demand.id }}">
+                <input type="hidden" name="redirect_to" value="/demands/{{ demand.public_id }}">
                 <label>
                   <span>Tu mensaje</span>
-                  <textarea name="body" rows="4" placeholder="Escribe tu respuesta para continuar la conversación." required></textarea>
+                  <textarea name="body" rows="4" maxlength="200" placeholder="Escribe tu respuesta para continuar la conversación." required></textarea>
                 </label>
                 <button type="submit" class="button button-primary">Enviar mensaje</button>
               </form>
@@ -190,12 +176,12 @@
             {% endif %}
           </div>
         {% else %}
-          <form action="/demands/{{ demand.id }}/offers" method="post" class="form-stack">
+          <form action="/demands/{{ demand.public_id }}/offers" method="post" class="form-stack">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <input type="hidden" name="redirect_to" value="/demands/{{ demand.id }}">
+            <input type="hidden" name="redirect_to" value="/demands/{{ demand.public_id }}">
             <label>
               <span>Tu propuesta</span>
-              <textarea name="message" rows="6" placeholder="Explica brevemente qué ofreces, condiciones o disponibilidad." required></textarea>
+              <textarea name="message" rows="6" maxlength="200" placeholder="Explica brevemente qué ofreces, condiciones o disponibilidad." required></textarea>
             </label>
             <button type="submit" class="button button-primary">Responder demanda</button>
           </form>

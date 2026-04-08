@@ -28,7 +28,7 @@
 
     <form action="/offers/{{ thread.id }}/messages" method="post" class="form-stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <textarea name="body" rows="4" placeholder="Escribe tu mensaje..." required></textarea>
+      <textarea name="body" rows="4" maxlength="200" placeholder="Escribe tu mensaje..." required></textarea>
       <button type="submit" class="button button-primary">Enviar mensaje</button>
     </form>
   </article>

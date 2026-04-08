@@ -809,6 +809,18 @@ textarea {
   min-width: 0;
 }
 
+.search-text-input-wrap {
+  position: relative;
+}
+
+.search-text-input-wrap input {
+  padding-right: 40px;
+}
+
+.search-text-input-wrap .zone-search-clear {
+  right: 10px;
+}
+
 .keyword-search {
   position: relative;
   z-index: 1200;
@@ -3135,10 +3147,13 @@ textarea {
 }
 
 .readonly-demand-map {
+  width: 100%;
+  height: 168px;
   min-height: 168px;
   border-radius: 16px;
   border: 1px solid var(--line);
   overflow: hidden;
+  background: #e7ecef;
 }
 
 .demand-feed-actions summary {

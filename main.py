@@ -36,7 +36,7 @@ def run_telegram_bot() -> None:
 
     # Construir y arrancar
     app = build_telegram_app(token)
-    print("🤖 Bot DMANDER (@santq_bot) arrancado. Ctrl+C para detener.")
+    print("🤖 Bot DMANDER (@dmanderbot) arrancado. Ctrl+C para detener.")
     app.run_polling(drop_pending_updates=True)
 
 
@@ -176,6 +176,20 @@ def run_web() -> None:
     )
 
 
+def run_reindex_demand_embeddings() -> None:
+    """Regenera embeddings de las demandas existentes."""
+    from database import init_db, reindex_demand_embeddings
+
+    try:
+        init_db()
+        updated = reindex_demand_embeddings()
+    except Exception as e:
+        print(f"❌ Error reindexando embeddings de demandas: {e}")
+        sys.exit(1)
+
+    print(f"✅ Embeddings reindexados para {updated} demandas.")
+
+
 def main() -> None:
     """Punto de entrada principal."""
     load_dotenv()
@@ -187,6 +201,8 @@ def main() -> None:
 
     if "--cli" in sys.argv:
         run_cli()
+    elif "--reindex-demand-embeddings" in sys.argv:
+        run_reindex_demand_embeddings()
     elif "--web" in sys.argv:
         run_web()
     else:

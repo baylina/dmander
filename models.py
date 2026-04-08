@@ -21,86 +21,32 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 
 class LLMResponse(BaseModel):
-    """Estructura que el LLM debe devolver en cada análisis."""
+    """Respuesta ligera del LLM para demandas en texto libre."""
 
-    intent_domain: str = Field(
-        default="",
-        description="Dominio macro estimado según el contrato maestro"
-    )
-    intent_type: str = Field(
-        description="Tipo estimado de demanda (ej: math_tutoring, hotel_booking, car_purchase...)"
-    )
-    confidence: float = Field(
-        ge=0.0, le=1.0,
-        description="Confianza aproximada del modelo en su análisis (0-1)"
-    )
-    known_fields: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Campos que el modelo cree que ya conoce"
-    )
-    description: str = Field(
-        default="",
-        description="Descripción libre de la demanda, cercana al texto original"
-    )
-    location_mode: str = Field(
-        default="unspecified",
-        description="Modo de localización normalizado"
-    )
-    location_value: Optional[str] = Field(
-        default=None,
-        description="Valor de localización normalizado"
-    )
-    budget_mode: str = Field(
-        default="optional_range",
-        description="Política o modo de presupuesto aplicable"
-    )
-    budget_min: Optional[float] = Field(default=None)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    summary: str = Field(default="")
+    known_fields: dict[str, Any] = Field(default_factory=dict)
+    description: str = Field(default="")
+    location_mode: str = Field(default="unspecified")
+    location_value: Optional[str] = Field(default=None)
     budget_max: Optional[float] = Field(default=None)
+    budget_unit: str = Field(default="total")
+    attributes: dict[str, Any] = Field(default_factory=dict)
+    suggested_missing_details: list[str] = Field(default_factory=list)
+    next_question: Optional[str] = Field(default=None)
+    enough_information: bool = Field(default=True)
+    intent_domain: str = Field(default="")
+    intent_type: str = Field(default="")
+    budget_mode: str = Field(default="optional_fixed")
+    budget_min: Optional[float] = Field(default=None)
     urgency: Optional[str] = Field(default=None)
-    dates: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Fechas relevantes extraídas de la demanda"
-    )
-    attributes: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Atributos dinámicos no cubiertos por el núcleo común"
-    )
-    suggested_fields: list[str] = Field(
-        default_factory=list,
-        description="Campos típicos y útiles que el modelo sugiere para este tipo de demanda"
-    )
-    required_missing_fields: list[str] = Field(
-        default_factory=list,
-        description="Campos obligatorios faltantes según el contrato maestro"
-    )
-    recommended_missing_fields: list[str] = Field(
-        default_factory=list,
-        description="Campos opcionales recomendables aún no presentes"
-    )
-    validation_issues: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="Problemas de normalización detectados en campos presentes pero aún no utilizables"
-    )
-    next_question_field: Optional[str] = Field(
-        default=None,
-        description="Campo concreto que se está intentando completar o corregir"
-    )
-    missing_fields: list[str] = Field(
-        default_factory=list,
-        description="Campos importantes que aún faltan por completar"
-    )
-    next_question: Optional[str] = Field(
-        default=None,
-        description="Mejor siguiente pregunta para el demandante, o null si ya hay suficiente info"
-    )
-    enough_information: bool = Field(
-        default=False,
-        description="Indica si ya hay suficiente contexto para cerrar la demanda"
-    )
-    summary: str = Field(
-        default="",
-        description="Resumen breve y legible de la demanda actual"
-    )
+    dates: dict[str, Any] = Field(default_factory=dict)
+    suggested_fields: list[str] = Field(default_factory=list)
+    required_missing_fields: list[str] = Field(default_factory=list)
+    recommended_missing_fields: list[str] = Field(default_factory=list)
+    validation_issues: list[dict[str, Any]] = Field(default_factory=list)
+    next_question_field: Optional[str] = Field(default=None)
+    missing_fields: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -108,13 +54,11 @@ class LLMResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class DemandResult(BaseModel):
-    """Demanda normalizada final compatible con el contrato maestro."""
+    """Demanda simplificada: texto libre + ubicación y presupuesto opcionales."""
 
     id: Optional[int] = None
     entity_type: str = "d"
     raw_text: str = ""
-    intent_domain: str = ""
-    intent_type: str
     summary: str
     description: str = ""
     location_mode: str = "unspecified"
@@ -128,25 +72,30 @@ class DemandResult(BaseModel):
     location_source: Optional[str] = None
     location_raw_query: Optional[str] = None
     location_bbox: list[float] = Field(default_factory=list)
-    location_geojson: dict[str, Any] = Field(default_factory=dict)
     location_json: dict[str, Any] = Field(default_factory=dict)
-    budget_mode: str = "optional_range"
+    budget_mode: str = "optional_fixed"
     location: Optional[str] = None
-    budget_min: Optional[float] = None
     budget_max: Optional[float] = None
-    urgency: Optional[str] = None
-    dates: dict[str, Any] = Field(default_factory=dict)
+    budget_unit: str = "total"
     expires_at: Optional[datetime] = None
     attributes: dict[str, Any] = Field(default_factory=dict)
     known_fields: dict[str, Any] = Field(default_factory=dict)
+    suggested_missing_details: list[str] = Field(default_factory=list)
+    next_question: Optional[str] = None
+    enough_information: bool = True
+    confidence: float = 0.0
+    llm_metadata: dict[str, Any] = Field(default_factory=dict)
+    intent_domain: str = ""
+    intent_type: str = "free_text"
+    budget_min: Optional[float] = None
+    urgency: Optional[str] = None
+    dates: dict[str, Any] = Field(default_factory=dict)
     required_missing_fields: list[str] = Field(default_factory=list)
     recommended_missing_fields: list[str] = Field(default_factory=list)
     validation_issues: list[dict[str, Any]] = Field(default_factory=list)
-    next_question: Optional[str] = None
-    enough_information: bool = False
-    confidence: float = 0.0
     schema_version: str = ""
     needs_review: bool = False
+    location_geojson: dict[str, Any] = Field(default_factory=dict)
     created_at: Optional[datetime] = None
 
 
@@ -181,10 +130,10 @@ class PublicDemand(BaseModel):
     """Demanda pública mostrada en la web."""
 
     id: int
+    public_id: str = ""
     user_id: Optional[int] = None
-    intent_domain: str = ""
     summary: str
-    intent_type: str
+    original_text: str = ""
     location: Optional[str] = None
     location_label: Optional[str] = None
     location_display: Optional[str] = None
@@ -197,11 +146,9 @@ class PublicDemand(BaseModel):
     location_source: Optional[str] = None
     location_raw_query: Optional[str] = None
     location_bbox: list[float] = Field(default_factory=list)
-    location_geojson: dict[str, Any] = Field(default_factory=dict)
     location_json: dict[str, Any] = Field(default_factory=dict)
-    budget_min: Optional[float] = None
     budget_max: Optional[float] = None
-    urgency: Optional[str] = None
+    budget_unit: str = "total"
     status: str = "open"
     effective_status: str = "open"
     is_pinned: bool = False
@@ -215,8 +162,15 @@ class PublicDemand(BaseModel):
     created_at: Optional[datetime] = None
     attributes: dict[str, Any] = Field(default_factory=dict)
     normalized_payload: dict[str, Any] = Field(default_factory=dict)
+    llm_metadata: dict[str, Any] = Field(default_factory=dict)
+    suggested_missing_details: list[str] = Field(default_factory=list)
     viewer_has_offer: bool = False
     viewer_offer_id: Optional[int] = None
+    intent_domain: str = ""
+    intent_type: str = "free_text"
+    budget_min: Optional[float] = None
+    urgency: Optional[str] = None
+    location_geojson: dict[str, Any] = Field(default_factory=dict)
 
 
 class OfferResult(BaseModel):

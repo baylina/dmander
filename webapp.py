@@ -42,6 +42,7 @@ from database import (
     authenticate_user,
     clear_demand_wizard as clear_demand_wizard_record,
     change_user_password,
+    consume_magic_login_token,
     create_offer_message,
     create_offer,
     create_api_token,
@@ -51,6 +52,7 @@ from database import (
     delete_filter,
     delete_web_demand,
     get_editable_demand,
+    get_demand_id_by_public_id,
     get_admin_user_detail,
     get_dashboard_data,
     get_demand_detail,
@@ -111,6 +113,7 @@ from zone_selector import (
     normalize_zone_payload,
     zone_display_value,
 )
+from utils import parse_json_response
 
 try:
     from authlib.integrations.starlette_client import OAuth
@@ -123,6 +126,10 @@ templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 RUNTIME_DIR = Path(BASE_DIR) / ".runtime"
 GUEST_WIZARDS_DIR = RUNTIME_DIR / "guest_wizards"
 logger = logging.getLogger(__name__)
+
+DEMAND_TEXT_MIN_LENGTH = 8
+DEMAND_TEXT_MAX_LENGTH = 200
+MESSAGE_TEXT_MAX_LENGTH = 200
 
 SELECT_FIELD_OPTIONS: dict[str, list[dict[str, str]]] = {
     "modality": [
@@ -201,6 +208,47 @@ class AgentDemandPublishRequest(BaseModel):
     known_fields: dict[str, Any] = Field(default_factory=dict)
 
 
+class LightweightDemandAnalysis(BaseModel):
+    summary: str = ""
+    location_hint: Optional[str] = None
+    budget_max: Optional[float] = None
+    budget_unit: str = "total"
+    suggested_missing_details: list[str] = Field(default_factory=list)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+BUDGET_UNIT_OPTIONS: list[dict[str, str]] = [
+    {"value": "total", "label": "En total"},
+    {"value": "hour", "label": "Por hora"},
+    {"value": "night", "label": "Por noche"},
+    {"value": "day", "label": "Por día"},
+    {"value": "month", "label": "Al mes"},
+    {"value": "item", "label": "Por producto"},
+    {"value": "service", "label": "Por servicio"},
+]
+
+BUDGET_UNIT_LABELS = {item["value"]: item["label"] for item in BUDGET_UNIT_OPTIONS}
+
+LIGHTWEIGHT_DEMAND_SYSTEM_PROMPT = """
+Analiza una demanda escrita en lenguaje natural para un marketplace.
+
+Devuelve SOLO un JSON con estas claves:
+- summary: resumen breve y claro en el mismo idioma del texto
+- location_hint: texto corto con la ubicación si está clara, o null
+- budget_max: número máximo en euros si aparece con claridad, o null
+- budget_unit: una de estas opciones exactas: total, hour, night, day, month, item, service
+- suggested_missing_details: lista corta de detalles que sería útil añadir al texto original, pero nunca obligatorios
+- confidence: número entre 0 y 1
+
+Reglas:
+- No clasifiques por categorías ni intent_types.
+- Si el precio no está claro, usa budget_max = null y budget_unit = total.
+- No incluyas nunca en suggested_missing_details sugerencias sobre ubicación, ciudad, zona, provincia, mapa, presupuesto, precio o importe, porque esos atributos ya se revisan aparte en la aplicación.
+- suggested_missing_details debe contener como máximo 4 elementos, redactados en el idioma original del texto.
+- Si el texto ya está suficientemente claro, suggested_missing_details puede ser [].
+""".strip()
+
+
 def build_app() -> FastAPI:
     init_db()
 
@@ -232,24 +280,16 @@ def build_app() -> FastAPI:
         location_radius_bucket: str = "",
         location_source: str = "",
         location_raw_query: str = "",
-        intent_type: str = "",
-        intent_domains_json: str = "",
-        intent_types_json: str = "",
         saved_filter_id: str = "",
         page: int = 1,
     ) -> HTMLResponse:
         current_user = _get_display_user(request)
         current_saved_filter = None
         selected_saved_filter_id = int(saved_filter_id) if str(saved_filter_id).strip().isdigit() else None
-        selected_domains = _parse_json_string_list(intent_domains_json)
-        selected_types = _parse_json_string_list(intent_types_json)
         has_explicit_search_inputs = bool(
             q.strip()
             or location.strip()
             or location_zone_json.strip()
-            or intent_type.strip()
-            or selected_domains
-            or selected_types
             or location_label.strip()
             or location_lat is not None
             or location_lon is not None
@@ -271,10 +311,7 @@ def build_app() -> FastAPI:
                 location_radius_bucket = current_saved_filter.get("location_radius_bucket", "")
                 location_source = current_saved_filter.get("location_source", "")
                 location_raw_query = current_saved_filter.get("location_raw_query", "")
-                intent_type = current_saved_filter.get("intent_type", "")
-                selected_domains, selected_types = _saved_filter_categories(current_saved_filter)
         zone_filter = _parse_zone_json(location_zone_json)
-        effective_intent_type_filter = "" if selected_types else (intent_type or "").strip()
         if not zone_filter and (location_lat is not None and location_lon is not None):
             zone_filter = normalize_zone_payload(
                 {
@@ -295,29 +332,20 @@ def build_app() -> FastAPI:
             current_saved_filter,
             q=q,
             location=location,
-            intent_type=effective_intent_type_filter,
             zone_filter=zone_filter,
-            intent_domains=selected_domains,
-            intent_types=selected_types,
         )
         has_active_search = bool(
             q.strip()
             or location.strip()
-            or effective_intent_type_filter
             or has_zone_filter
             or selected_saved_filter_id
-            or selected_domains
-            or selected_types
         )
         effective_location_text = "" if has_zone_filter else location
         all_demands = get_public_demands(
             q,
             effective_location_text,
-            effective_intent_type_filter,
             current_user.id if current_user else None,
             zone_filter=zone_filter,
-            intent_domains=selected_domains,
-            intent_types=selected_types,
         )
         if zone_filter:
             all_demands = [
@@ -342,12 +370,6 @@ def build_app() -> FastAPI:
                 "search_filters": {
                     "q": q,
                     "location": location,
-                    "intent_type": effective_intent_type_filter,
-                    "intent_domains": selected_domains,
-                    "intent_types": selected_types,
-                    "intent_domains_json": json.dumps(selected_domains, ensure_ascii=False),
-                    "intent_types_json": json.dumps(selected_types, ensure_ascii=False),
-                    "category_summary": _category_summary(selected_domains, selected_types),
                     "location_zone": _compact_zone_for_query(zone_filter) or default_zone_payload(),
                     "location_zone_json": json.dumps(_compact_zone_for_query(zone_filter) or default_zone_payload(), ensure_ascii=False),
                 },
@@ -359,17 +381,13 @@ def build_app() -> FastAPI:
                     current_user and has_active_search and (not current_saved_filter or not current_search_matches_saved_filter)
                 ),
                 "keyword_suggestions": _keyword_suggestions(),
-                "category_catalog": _category_catalog(),
                 "pagination": _home_pagination(
                     page,
                     total_pages,
                     q,
                     location,
-                    effective_intent_type_filter,
                     zone_filter,
                     selected_saved_filter_id,
-                    selected_domains,
-                    selected_types,
                 ),
             },
         )
@@ -399,6 +417,17 @@ def build_app() -> FastAPI:
         redirect_target = _complete_pending_guest_publication(request, user) or "/app/chats"
         _flash(request, f"Bienvenido de nuevo, {user.full_name}.", "success")
         return _redirect(redirect_target)
+
+    @app.get("/auth/telegram/{token}")
+    async def telegram_magic_login(request: Request, token: str, next: str = "/app/chats") -> RedirectResponse:
+        user = consume_magic_login_token(token)
+        if not user:
+            _flash(request, "El enlace de acceso desde Telegram ya no es válido. Pide uno nuevo desde el bot.", "error")
+            return _redirect("/login")
+        request.session["user_id"] = user.id
+        request.session.pop("admin_view_user_id", None)
+        _flash(request, f"Has accedido a dmander con tu cuenta de Telegram, {user.full_name}.", "success")
+        return _redirect(_safe_internal_redirect_path(next))
 
     @app.get("/signup", response_class=HTMLResponse)
     async def signup_page(request: Request) -> HTMLResponse:
@@ -1117,9 +1146,6 @@ def build_app() -> FastAPI:
         query_text: str = Form(""),
         location: str = Form(""),
         location_zone_json: str = Form(""),
-        intent_type: str = Form(""),
-        intent_domains_json: str = Form(""),
-        intent_types_json: str = Form(""),
         filter_id: int | None = Form(None),
         save_mode: str = Form("create"),
         csrf_token: str = Form(...),
@@ -1133,9 +1159,6 @@ def build_app() -> FastAPI:
             _flash(request, "Ponle un nombre al filtro.", "error")
             return _redirect("/")
         zone_filter = _parse_zone_json(location_zone_json)
-        selected_domains = _parse_json_string_list(intent_domains_json)
-        selected_types = _parse_json_string_list(intent_types_json)
-        effective_intent_type = (selected_types[0] if selected_types else intent_type).strip()
         should_update = filter_id is not None and save_mode == "update"
         saved_filter_target_id: int | None = None
         if should_update:
@@ -1145,10 +1168,10 @@ def build_app() -> FastAPI:
                 name,
                 query_text,
                 location,
-                effective_intent_type,
+                "",
                 zone_filter=zone_filter,
-                intent_domains=selected_domains,
-                intent_types=selected_types,
+                intent_domains=[],
+                intent_types=[],
             ):
                 saved_filter_target_id = filter_id
                 _flash(request, "Filtro actualizado.", "success")
@@ -1160,10 +1183,10 @@ def build_app() -> FastAPI:
                 name,
                 query_text,
                 location,
-                effective_intent_type,
+                "",
                 zone_filter=zone_filter,
-                intent_domains=selected_domains,
-                intent_types=selected_types,
+                intent_domains=[],
+                intent_types=[],
             )
             _flash(request, "Filtro guardado.", "success")
         return _redirect(f"/?saved_filter_id={saved_filter_target_id}" if saved_filter_target_id else "/")
@@ -1200,8 +1223,12 @@ def build_app() -> FastAPI:
     async def notifications_api(request: Request) -> dict[str, Any]:
         user = _get_current_user(request)
         if not user:
-            raise HTTPException(status_code=401, detail="Autenticación requerida")
+            return {"my_demands_unread": 0, "my_offers_unread": 0, "items": []}
         return get_notification_summary(user.id)
+
+    @app.get("/favicon.ico")
+    async def favicon() -> RedirectResponse:
+        return RedirectResponse(url="/static/img/logo.svg", status_code=307)
 
     @app.get("/api/notifications/stream")
     async def notifications_stream(request: Request) -> StreamingResponse:
@@ -1303,8 +1330,8 @@ def build_app() -> FastAPI:
         verbose: bool = False,
     ) -> dict[str, Any]:
         _require_api_user(request)
-        context = _build_agent_publication_context(agent, payload.text, payload.known_fields, verbose=verbose)
-        return _to_json_ready(context["payload"])
+        context = _build_lightweight_publication_context(agent.llm, payload.text, payload.known_fields, verbose=verbose)
+        return _to_json_ready(_api_analysis_payload(context["payload"], verbose=verbose))
 
     @app.post("/api/agent/demands/publish", status_code=status.HTTP_201_CREATED)
     async def agent_demands_publish(
@@ -1313,8 +1340,8 @@ def build_app() -> FastAPI:
         verbose: bool = False,
     ) -> JSONResponse:
         api_user = _require_api_user(request)
-        context = _build_agent_publication_context(agent, payload.text, payload.known_fields, verbose=verbose)
-        analysis_payload = context["payload"]
+        context = _build_lightweight_publication_context(agent.llm, payload.text, payload.known_fields, verbose=verbose)
+        analysis_payload = _api_analysis_payload(context["payload"], verbose=verbose)
         if not analysis_payload.get("publish_ready"):
             return JSONResponse(status_code=422, content=_to_json_ready(analysis_payload))
 
@@ -1324,8 +1351,8 @@ def build_app() -> FastAPI:
             content=_to_json_ready(
                 {
                     "status": "published",
-                    "demand": persisted.model_dump(mode="json"),
-                    "detail_url": f"/demands/{persisted.id}",
+                    "demand": _api_published_demand_payload(persisted),
+                    "detail_url": _demand_public_path(persisted),
                     "chats_url": f"/app/chats?demand_id={persisted.id}",
                     "analysis": analysis_payload,
                 }
@@ -1390,8 +1417,8 @@ def build_app() -> FastAPI:
                 "submit_action": "/demands",
                 "submit_label": "Analizar y continuar",
                 "page_title": "Publica lo que necesitas",
-                "page_note": "Describe tu necesidad con tus palabras. Te ayudaremos a completar solo lo imprescindible.",
-                "initial_text": (active_wizard or {}).get("state", {}).get("original_text", ""),
+                "page_note": "Escribe tu necesidad con libertad. Después podrás revisar el texto, la ubicación y el precio máximo si aplica.",
+                "initial_text": active_wizard["state"].original_text if active_wizard else "",
                 "edit_demand": None,
                 "auth_stage": "guest" if not user else "authenticated",
             },
@@ -1421,8 +1448,8 @@ def build_app() -> FastAPI:
                 "submit_action": f"/demands/{demand_id}/edit",
                 "submit_label": "Analizar y actualizar",
                 "page_title": "Edita tu demanda",
-                "page_note": "Reescribe la necesidad y en el siguiente paso podrás revisar todos los campos detectados antes de guardar.",
-                "initial_text": (active_wizard or {}).get("state", {}).get("original_text", "") or demand.get("original_text") or demand.get("normalized_payload", {}).get("description", ""),
+                "page_note": "Revisa el texto, la ubicación opcional y el precio máximo opcional antes de guardar.",
+                "initial_text": (active_wizard["state"].original_text if active_wizard else "") or demand.get("original_text") or demand.get("normalized_payload", {}).get("description", ""),
                 "edit_demand": demand,
             },
         )
@@ -1435,13 +1462,21 @@ def build_app() -> FastAPI:
     ) -> RedirectResponse:
         _validate_csrf(request, csrf_token)
         user = _get_current_user(request)
-
-        if len(demand_text.strip()) < 8:
+        original_text = str(demand_text or "").strip()
+        demand_text = _normalize_text_limit(demand_text, max_length=DEMAND_TEXT_MAX_LENGTH)
+        if len(demand_text) < DEMAND_TEXT_MIN_LENGTH:
             _flash(request, "Escribe tu demanda con un poco más de detalle.", "error")
             return _redirect("/demands/new")
-
-        state = SessionState(original_text=demand_text.strip())
-        return _prepare_demand_questionnaire(request, user.id if user else None, agent, state, wizard_mode="create")
+        if len(original_text) > DEMAND_TEXT_MAX_LENGTH:
+            _flash(request, f"La demanda no puede superar {DEMAND_TEXT_MAX_LENGTH} caracteres.", "error")
+            return _redirect("/demands/new")
+        draft = _analyze_lightweight_demand(agent.llm, demand_text)
+        _save_demand_wizard(
+            request,
+            user.id if user else None,
+            _simple_wizard_session(draft, wizard_mode="create", step="questions"),
+        )
+        return _redirect("/demands/new")
 
     @app.post("/demands/{demand_id}/edit")
     async def edit_demand_route(
@@ -1458,12 +1493,21 @@ def build_app() -> FastAPI:
         if not get_editable_demand(demand_id, user.id):
             _flash(request, "Solo puedes editar tus demandas abiertas.", "error")
             return _redirect("/my-demands")
-        if len(demand_text.strip()) < 8:
+        original_text = str(demand_text or "").strip()
+        demand_text = _normalize_text_limit(demand_text, max_length=DEMAND_TEXT_MAX_LENGTH)
+        if len(demand_text) < DEMAND_TEXT_MIN_LENGTH:
             _flash(request, "Escribe tu demanda con un poco más de detalle.", "error")
             return _redirect(f"/demands/{demand_id}/edit")
-
-        state = SessionState(original_text=demand_text.strip())
-        return _prepare_demand_questionnaire(request, user.id, agent, state, wizard_mode="edit", target_demand_id=demand_id)
+        if len(original_text) > DEMAND_TEXT_MAX_LENGTH:
+            _flash(request, f"La demanda no puede superar {DEMAND_TEXT_MAX_LENGTH} caracteres.", "error")
+            return _redirect(f"/demands/{demand_id}/edit")
+        draft = _analyze_lightweight_demand(agent.llm, demand_text)
+        _save_demand_wizard(
+            request,
+            user.id,
+            _simple_wizard_session(draft, wizard_mode="edit", step="questions", target_demand_id=demand_id),
+        )
+        return _redirect(f"/demands/{demand_id}/edit")
 
     @app.post("/demands/review")
     async def review_demand_route(request: Request) -> RedirectResponse:
@@ -1475,69 +1519,97 @@ def build_app() -> FastAPI:
             _flash(request, "No hay ninguna demanda pendiente de completar.", "error")
             return _redirect("/demands/new")
 
-        wizard_view = _inflate_wizard_for_view(wizard)
-        state = _session_to_state(wizard["state"])
-        field_entries = list(wizard_view.get("field_entries", []))
-        field_errors: dict[str, str] = {}
-        submitted_answers: dict[str, Any] = {}
+        if wizard.get("flow_version") == "simple_free_text":
+            original_text = str(form.get("demand_text", "")).strip()
+            demand_text = _normalize_text_limit(original_text, max_length=DEMAND_TEXT_MAX_LENGTH)
+            if len(demand_text) < DEMAND_TEXT_MIN_LENGTH:
+                _flash(request, "Escribe tu demanda con un poco más de detalle.", "error")
+                return _redirect(_wizard_return_path(wizard.get("mode", "create"), wizard.get("target_demand_id")))
+            if len(original_text) > DEMAND_TEXT_MAX_LENGTH:
+                _flash(request, f"La demanda no puede superar {DEMAND_TEXT_MAX_LENGTH} caracteres.", "error")
+                return _redirect(_wizard_return_path(wizard.get("mode", "create"), wizard.get("target_demand_id")))
 
-        for entry in field_entries:
-            field_name = entry.get("field_name", "")
-            control = entry.get("control", {})
-            submitted_answers[field_name] = _extract_field_answer(form, field_name, control)
+            zone_payload = _parse_zone_json(str(form.get("location_zone_json", "")))
+            budget_max_amount = _coerce_budget_amount(form.get("budget_max_amount"))
+            budget_unit = _normalize_budget_unit(form.get("budget_unit"))
+            overrides = {
+                "location_json": zone_payload,
+                "budget_max_amount": budget_max_amount,
+                "budget_unit": budget_unit,
+            }
+            draft = _analyze_lightweight_demand(agent.llm, demand_text, overrides)
+            state = SessionState(original_text=draft.raw_text, known_fields=draft.known_fields, summary=draft.summary)
+            wizard_mode = wizard.get("mode", "create")
+            target_demand_id = wizard.get("target_demand_id")
 
-        for entry in field_entries:
-            field_name = entry.get("field_name", "")
-            control = entry.get("control", {})
-            answer = submitted_answers.get(field_name)
-            existing_value = state.known_fields.get(field_name)
-            if entry.get("category") == "optional" and not _has_content(answer):
-                continue
-            option_error = _validate_control_answer(answer, control, field_name, state.known_fields, submitted_answers)
-            if option_error:
-                field_errors[field_name] = option_error
-                continue
-            if answer:
-                if control.get("kind") == "zone_selector" and isinstance(answer, dict):
-                    state.known_fields[field_name] = answer.get("label", "")
-                    state.known_fields["location_json"] = answer
-                    state.known_fields["location_value"] = answer.get("label", "")
-                    state.known_fields["location"] = answer.get("label", "")
-                elif control.get("kind") == "budget_range" and isinstance(answer, dict):
-                    state.known_fields[field_name] = answer
-                    state.known_fields["budget_min"] = answer.get("min", "")
-                    state.known_fields["budget_max"] = answer.get("max", "")
-                else:
-                    state.known_fields[field_name] = answer
-                    if field_name == "budget_max":
-                        state.known_fields["budget_max"] = answer
-                state.questions_asked.append(entry.get("question", field_name))
-                state.user_answers.append(_format_answer_for_review(answer, control))
-            elif entry.get("category") == "required" and not existing_value:
-                field_errors[field_name] = "Este campo es obligatorio antes de publicar la demanda."
+            if user is None:
+                wizard_data = _simple_wizard_session(
+                    draft,
+                    wizard_mode=wizard_mode,
+                    step="review",
+                    target_demand_id=target_demand_id,
+                    awaiting_auth=True,
+                )
+                _save_demand_wizard(request, None, wizard_data)
+                active_wizard = _inflate_wizard_for_view(wizard_data)
+                return _render(
+                    request,
+                    "new_demand.html",
+                    {
+                        "title": "Completa tu publicación",
+                        "active_nav": "publish",
+                        "page_kind": "public",
+                        "wizard_mode": wizard_mode,
+                        "active_wizard": active_wizard,
+                        "submit_action": "/demands",
+                        "submit_label": "Analizar y continuar",
+                        "page_title": "Tu demanda está lista para publicarse",
+                        "page_note": "",
+                        "initial_text": demand_text,
+                        "edit_demand": None,
+                        "auth_stage": "guest",
+                    },
+                )
 
-        if field_errors:
-            _flash(request, "Completa los campos obligatorios marcados antes de publicar la demanda.", "error")
-            _save_demand_wizard(
+            if wizard_mode == "edit" and target_demand_id:
+                persisted_demand = update_web_demand_from_agent(target_demand_id, user.id, draft, state)
+                if not persisted_demand:
+                    _flash(request, "No he podido actualizar la demanda. Comprueba que sigue activa.", "error")
+                    return _redirect("/app/chats")
+            else:
+                persisted_demand = save_web_demand_from_agent(user.id, draft, state)
+
+            _clear_demand_wizard(request, user.id)
+            active_wizard = _inflate_wizard_for_view(
+                _simple_wizard_session(
+                    draft,
+                    wizard_mode=wizard_mode,
+                    step="review",
+                    target_demand_id=target_demand_id,
+                    published_message="Tu demanda ya está visible y lista para recibir respuestas.",
+                )
+            )
+            return _render(
                 request,
-                user.id if user else None,
+                "new_demand.html",
                 {
-                **wizard,
-                "state": _state_to_session(state),
-                "field_errors": field_errors,
+                    "title": "Nueva demanda" if wizard_mode == "create" else "Editar demanda",
+                    "active_nav": "publish",
+                    "page_kind": "app",
+                    "wizard_mode": wizard_mode,
+                    "active_wizard": active_wizard,
+                    "submit_action": "/demands",
+                    "submit_label": "Analizar y continuar",
+                    "page_title": "Publica lo que necesitas",
+                    "page_note": "",
+                    "initial_text": demand_text,
+                    "edit_demand": persisted_demand if wizard_mode == "edit" else None,
                 },
             )
-            return _redirect(_wizard_return_path(wizard.get("mode", "create"), wizard.get("target_demand_id")))
 
-        return _prepare_demand_review(
-            request,
-            user.id if user else None,
-            agent,
-            state,
-            wizard_mode=wizard.get("mode", "create"),
-            target_demand_id=wizard.get("target_demand_id"),
-            asked_entries=field_entries,
-        )
+        _clear_demand_wizard(request, user.id if user else None)
+        _flash(request, "He descartado un borrador antiguo del asistente para mantener el nuevo flujo simple de publicación.", "error")
+        return _redirect("/demands/new?fresh=1")
 
     @app.post("/demands/wizard/edit-text")
     async def demand_wizard_edit_text(
@@ -1567,16 +1639,16 @@ def build_app() -> FastAPI:
         _save_demand_wizard(request, user.id if user else None, wizard)
         return _redirect(_wizard_return_path(wizard.get("mode", "create"), wizard.get("target_demand_id")))
 
-    @app.get("/demands/{demand_id}", response_class=HTMLResponse)
-    async def demand_detail_page(request: Request, demand_id: int, offer_id: int | None = None) -> HTMLResponse:
+    @app.get("/demands/{public_id}", response_class=HTMLResponse)
+    async def demand_detail_page(request: Request, public_id: str, offer_id: int | None = None) -> HTMLResponse:
         actor_user = _get_current_user(request)
         current_user = _get_display_user(request, actor_user)
-        demand = get_demand_detail(demand_id, current_user.id if current_user else None)
+        demand = get_demand_detail(public_id, current_user.id if current_user else None)
         if not demand:
             raise HTTPException(status_code=404, detail="Demanda no encontrada")
         if demand.get("effective_status") != "open" and not (demand.get("is_owner") or demand.get("viewer_has_offer")):
             raise HTTPException(status_code=404, detail="Demanda no disponible")
-        offers = get_offers_for_owner(demand_id, current_user.id) if current_user and demand.get("is_owner") else []
+        offers = get_offers_for_owner(demand["id"], current_user.id) if current_user and demand.get("is_owner") else []
         owner_selected_offer_id = None
         if offers:
             valid_offer_ids = {item.id for item in offers}
@@ -1592,9 +1664,6 @@ def build_app() -> FastAPI:
                 participant_user_id=current_user.id,
                 mark_read=not _is_admin_readonly_view(request, actor_user),
             )
-        registry = get_master_schema_registry()
-        schema = registry.resolve_intent_schema(demand.get("intent_type", ""))
-        category_path = f"{registry.domains.get(schema.intent_domain, schema.intent_domain)} > {schema.display_name}"
         detail_entries = _demand_detail_answered_fields(demand)
         return _render(
             request,
@@ -1606,16 +1675,15 @@ def build_app() -> FastAPI:
                 "demand": demand,
                 "offers": offers,
                 "owner_selected_offer_id": owner_selected_offer_id,
-                "demand_category_path": category_path,
                 "detail_entries": detail_entries,
                 "existing_thread": existing_thread,
             },
         )
 
-    @app.post("/demands/{demand_id}/offers")
+    @app.post("/demands/{public_id}/offers")
     async def create_offer_route(
         request: Request,
-        demand_id: int,
+        public_id: str,
         message: str = Form(...),
         redirect_to: str = Form(""),
         csrf_token: str = Form(...),
@@ -1625,13 +1693,22 @@ def build_app() -> FastAPI:
         if readonly_redirect:
             return readonly_redirect
         user = _get_current_user(request)
-        target = redirect_to.strip() or f"/#demand-{demand_id}"
+        demand_id = get_demand_id_by_public_id(public_id)
+        target = redirect_to.strip() or (f"/demands/{public_id}" if public_id else "/")
+        if not demand_id:
+            _flash(request, "La demanda ya no existe.", "error")
+            return _redirect("/")
         if not user:
             _flash(request, "Necesitas iniciar sesión para enviar una oferta.", "error")
             return _redirect("/login")
 
-        if len(message.strip()) < 12:
+        message_raw = str(message or "").strip()
+        message = _normalize_text_limit(message_raw, max_length=MESSAGE_TEXT_MAX_LENGTH)
+        if len(message) < 12:
             _flash(request, "La oferta debe explicar qué ofreces con algo más de detalle.", "error")
+            return _redirect(target)
+        if len(message_raw) > MESSAGE_TEXT_MAX_LENGTH:
+            _flash(request, f"El mensaje no puede superar {MESSAGE_TEXT_MAX_LENGTH} caracteres.", "error")
             return _redirect(target)
 
         try:
@@ -1672,8 +1749,13 @@ def build_app() -> FastAPI:
         if not user:
             _flash(request, "Necesitas iniciar sesión para responder en la conversación.", "error")
             return _redirect("/login")
-        if not body.strip():
+        body_raw = str(body or "").strip()
+        body = _normalize_text_limit(body_raw, max_length=MESSAGE_TEXT_MAX_LENGTH)
+        if not body:
             _flash(request, "El mensaje no puede estar vacío.", "error")
+            return _redirect(target)
+        if len(body_raw) > MESSAGE_TEXT_MAX_LENGTH:
+            _flash(request, f"El mensaje no puede superar {MESSAGE_TEXT_MAX_LENGTH} caracteres.", "error")
             return _redirect(target)
         if not create_offer_message(offer_id, user.id, body):
             _flash(request, "No se ha podido enviar el mensaje.", "error")
@@ -1693,8 +1775,12 @@ def build_app() -> FastAPI:
         user = _get_current_user(request)
         if not user:
             raise HTTPException(status_code=401, detail="Autenticación requerida")
-        if not body.strip():
+        body_raw = str(body or "").strip()
+        body = _normalize_text_limit(body_raw, max_length=MESSAGE_TEXT_MAX_LENGTH)
+        if not body:
             raise HTTPException(status_code=400, detail="Mensaje vacío")
+        if len(body_raw) > MESSAGE_TEXT_MAX_LENGTH:
+            raise HTTPException(status_code=400, detail=f"El mensaje no puede superar {MESSAGE_TEXT_MAX_LENGTH} caracteres")
         if not create_offer_message(offer_id, user.id, body):
             raise HTTPException(status_code=400, detail="No se ha podido enviar el mensaje")
         thread = get_offer_thread(offer_id, user.id)
@@ -1702,10 +1788,10 @@ def build_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Conversación no encontrada")
         return {"thread": _to_json_ready(thread), "notifications": get_notification_summary(user.id)}
 
-    @app.post("/demands/{demand_id}/delete")
+    @app.post("/demands/{public_id}/delete")
     async def delete_demand_route(
         request: Request,
-        demand_id: int,
+        public_id: str,
         csrf_token: str = Form(...),
     ) -> RedirectResponse:
         _validate_csrf(request, csrf_token)
@@ -1716,6 +1802,10 @@ def build_app() -> FastAPI:
         if not user:
             _flash(request, "Necesitas iniciar sesión para borrar una demanda.", "error")
             return _redirect("/login")
+        demand_id = get_demand_id_by_public_id(public_id)
+        if not demand_id:
+            _flash(request, "No he encontrado esa demanda.", "error")
+            return _redirect("/app/chats")
 
         if delete_web_demand(demand_id, user.id):
             _flash(request, "La demanda se ha eliminado.", "success")
@@ -1723,10 +1813,10 @@ def build_app() -> FastAPI:
             _flash(request, "No he podido eliminar esa demanda.", "error")
         return _redirect("/my-demands")
 
-    @app.post("/demands/{demand_id}/lifecycle")
+    @app.post("/demands/{public_id}/lifecycle")
     async def demand_lifecycle_page_route(
         request: Request,
-        demand_id: int,
+        public_id: str,
         action: str = Form(...),
         csrf_token: str = Form(...),
     ) -> RedirectResponse:
@@ -1738,11 +1828,15 @@ def build_app() -> FastAPI:
         if not user:
             _flash(request, "Necesitas iniciar sesión para actualizar una demanda.", "error")
             return _redirect("/login")
+        demand_id = get_demand_id_by_public_id(public_id)
+        if not demand_id:
+            _flash(request, "No he encontrado esa demanda.", "error")
+            return _redirect("/app/chats")
 
         normalized_action = (action or "").strip().lower()
         if not update_web_demand_lifecycle(user.id, demand_id, normalized_action):
             _flash(request, "No he podido actualizar esa demanda.", "error")
-            return _redirect(f"/demands/{demand_id}")
+            return _redirect(f"/demands/{public_id}")
 
         if normalized_action == "delete":
             _flash(request, "La demanda se ha eliminado.", "success")
@@ -1757,7 +1851,7 @@ def build_app() -> FastAPI:
         elif normalized_action == "unpin":
             _flash(request, "La demanda ya no está fijada.", "success")
 
-        return _redirect(f"/demands/{demand_id}")
+        return _redirect(f"/demands/{public_id}")
 
     @app.get("/auth/{provider}")
     async def auth_start(request: Request, provider: str) -> RedirectResponse:
@@ -1924,159 +2018,6 @@ def _require_api_user(request: Request):
     return user
 
 
-def _build_agent_publication_context(
-    agent: DemandAgent,
-    raw_text: str,
-    known_fields: dict[str, Any] | None = None,
-    *,
-    verbose: bool = False,
-) -> dict[str, Any]:
-    original_text = str(raw_text or "").strip()
-    if len(original_text) < 4:
-        raise HTTPException(status_code=400, detail="El campo text debe contener la demanda original")
-    if known_fields is not None and not isinstance(known_fields, dict):
-        raise HTTPException(status_code=400, detail="known_fields debe ser un objeto JSON")
-
-    state = SessionState(
-        original_text=original_text,
-        known_fields=merge_known_fields({}, known_fields or {}),
-        summary=original_text,
-    )
-    try:
-        response = agent.analyze(state)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=f"No he podido analizar la demanda: {exc}") from exc
-
-    _apply_wizard_inference(state, response)
-    agent.update_state(state, response)
-    review_response, draft = _build_local_review_response(state)
-    state.intent_domain = review_response.intent_domain
-    state.intent_type = review_response.intent_type
-    state.summary = review_response.summary
-    state.known_fields = merge_known_fields(
-        state.known_fields,
-        review_response.known_fields,
-        review_response.attributes,
-        {"dates": review_response.dates},
-    )
-    field_errors = _field_errors_from_response(review_response, state)
-    field_entries = _build_field_entries(state, review_response, field_errors)
-    answered_fields = _collect_answered_fields(state, field_entries)
-    payload = _agent_publication_payload(state, review_response, draft, field_entries, answered_fields, verbose=verbose)
-    return {
-        "state": state,
-        "response": review_response,
-        "draft": draft,
-        "field_entries": field_entries,
-        "answered_fields": answered_fields,
-        "payload": payload,
-    }
-
-
-def _serialize_agent_field_entry(entry: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "field_name": entry.get("field_name", ""),
-        "field_label": entry.get("field_label", ""),
-        "question": entry.get("question", ""),
-        "placeholder": entry.get("placeholder", ""),
-        "examples": list(entry.get("examples", [])),
-        "current_value": entry.get("current_value"),
-        "issue_message": entry.get("issue_message", ""),
-        "is_additional_required": bool(entry.get("is_additional_required")),
-        "conditional_rule": entry.get("conditional_rule"),
-        "client_visible": bool(entry.get("client_visible", True)),
-        "control": entry.get("control", {}),
-    }
-
-
-def _compact_agent_field_entry(entry: dict[str, Any]) -> dict[str, Any]:
-    control = dict(entry.get("control", {}) or {})
-    compact_control = {"kind": control.get("kind")}
-    if control.get("kind") == "select":
-        compact_control["options"] = control.get("options", [])
-        compact_control["value"] = control.get("value", "")
-    elif control.get("kind") in {"number", "integer", "date", "time", "datetime", "textarea", "budget_range"}:
-        if "value" in control:
-            compact_control["value"] = control.get("value")
-        if "min_value" in control:
-            compact_control["min_value"] = control.get("min_value")
-        if "max_value" in control:
-            compact_control["max_value"] = control.get("max_value")
-    elif control.get("kind") == "zone_selector":
-        zone_value = control.get("value") or {}
-        compact_control["value"] = {
-            "label": zone_value.get("label", ""),
-            "mode": zone_value.get("mode", ""),
-        }
-    return {
-        "field_name": entry.get("field_name", ""),
-        "field_label": entry.get("field_label", ""),
-        "question": entry.get("question", ""),
-        "placeholder": entry.get("placeholder", ""),
-        "examples": list(entry.get("examples", [])),
-        "current_value": entry.get("current_value"),
-        "issue_message": entry.get("issue_message", ""),
-        "control": compact_control,
-    }
-
-
-def _agent_publication_payload(
-    state: SessionState,
-    response: LLMResponse,
-    draft: DemandResult,
-    field_entries: list[dict[str, Any]],
-    answered_fields: list[dict[str, Any]],
-    *,
-    verbose: bool = False,
-) -> dict[str, Any]:
-    registry = get_master_schema_registry()
-    schema = registry.resolve_intent_schema(response.intent_type)
-    publish_ready = not response.required_missing_fields and not response.validation_issues
-    required_fields_full = [_serialize_agent_field_entry(entry) for entry in field_entries if entry.get("category") == "required"]
-    optional_fields_full = [_serialize_agent_field_entry(entry) for entry in field_entries if entry.get("category") == "optional"]
-    missing_or_invalid = set(response.required_missing_fields)
-    missing_or_invalid.update(
-        issue.get("field_name", "")
-        for issue in response.validation_issues
-        if issue.get("field_name")
-    )
-    fields_to_complete = [
-        _compact_agent_field_entry(entry)
-        for entry in field_entries
-        if entry.get("field_name") in missing_or_invalid
-    ]
-    payload = {
-        "status": "ready_to_publish" if publish_ready else "needs_input",
-        "publish_ready": publish_ready,
-        "original_text": state.original_text,
-        "summary": response.summary,
-        "intent_domain": response.intent_domain,
-        "intent_domain_display_name": registry.domains.get(schema.intent_domain, schema.intent_domain),
-        "intent_type": response.intent_type,
-        "intent_type_display_name": schema.display_name,
-        "next_question": response.next_question,
-        "next_question_field": response.next_question_field,
-        "required_missing_fields": list(response.required_missing_fields),
-        "recommended_missing_fields": list(response.recommended_missing_fields),
-        "validation_issues": list(response.validation_issues),
-        "known_fields": state.known_fields,
-        "fields_to_complete": fields_to_complete,
-        "publish_endpoint": "/api/agent/demands/publish",
-    }
-    if verbose:
-        payload.update(
-            {
-                "answered_fields": answered_fields,
-                "required_fields": required_fields_full,
-                "optional_fields": optional_fields_full,
-                "intent_schema": _raw_intent_schema_payload(response.intent_type),
-                "schema_outline": _schema_debug_outline(schema),
-                "normalized_draft": draft.model_dump(mode="json"),
-            }
-        )
-    return payload
-
-
 def _store_created_api_token(request: Request, name: str, plain_token: str) -> None:
     request.session["_created_api_token"] = {"name": name, "token": plain_token}
 
@@ -2188,19 +2129,13 @@ def _search_matches_saved_filter(
     *,
     q: str,
     location: str,
-    intent_type: str,
     zone_filter: Optional[dict[str, Any]],
-    intent_domains: Optional[list[str]] = None,
-    intent_types: Optional[list[str]] = None,
 ) -> bool:
     if not saved_filter:
         return False
-    saved_domains, saved_types = _saved_filter_categories(saved_filter)
     return (
         (q or "").strip() == (saved_filter.get("query_text") or "").strip()
         and (location or "").strip() == (saved_filter.get("location") or "").strip()
-        and saved_domains == _normalize_string_list(intent_domains)
-        and saved_types == _normalize_string_list(intent_types)
         and _zone_signature(zone_filter) == _zone_signature(saved_filter.get("location_json"))
     )
 
@@ -2527,6 +2462,27 @@ def _app_base_url(request: Request | None = None) -> str:
     return "http://127.0.0.1:8000"
 
 
+def _safe_internal_redirect_path(value: str, default: str = "/app/chats") -> str:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return default
+    if not candidate.startswith("/"):
+        return default
+    if candidate.startswith("//"):
+        return default
+    return candidate
+
+
+def _demand_public_path(demand: Any | None) -> str:
+    if not demand:
+        return "/"
+    public_id = str(getattr(demand, "public_id", None) or (demand.get("public_id") if isinstance(demand, dict) else "") or "").strip()
+    if public_id:
+        return f"/demands/{public_id}"
+    demand_id = getattr(demand, "id", None) if not isinstance(demand, dict) else demand.get("id")
+    return f"/demands/{demand_id}" if demand_id else "/"
+
+
 def _send_email_message(to_email: str, subject: str, body_text: str) -> bool:
     smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
     smtp_port = int(os.getenv("SMTP_PORT", "587"))
@@ -2595,7 +2551,7 @@ def _render(request: Request, template_name: str, context: dict[str, Any]) -> HT
     notification_summary = (
         get_notification_summary(current_user.id) if current_user and not admin_view_active else {"my_demands_unread": 0, "my_offers_unread": 0, "items": []}
     )
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         template_name,
         {
             "request": request,
@@ -2616,6 +2572,10 @@ def _render(request: Request, template_name: str, context: dict[str, Any]) -> HT
             **context,
         },
     )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 def _format_eur_amount(value: Any) -> str:
@@ -2640,18 +2600,7 @@ def _item_value(item: Any, key: str, default: Any = None) -> Any:
 
 
 def _budget_unit_marketplace_label(intent_type: str) -> str:
-    schema = get_master_schema_registry().resolve_intent_schema(intent_type)
-    unit_map = {
-        "one-time": "",
-        "per hour": "por hora",
-        "per day": "por día",
-        "per night": "por noche",
-        "per season": "por sesión",
-        "weekly": "por semana",
-        "monthly": "al mes",
-        "anual": "al año",
-    }
-    return unit_map.get(schema.budget_unit or "", "")
+    return BUDGET_UNIT_LABELS.get(_normalize_budget_unit(intent_type), "")
 
 
 def _demand_budget_display(demand: Any) -> dict[str, Any]:
@@ -2659,7 +2608,7 @@ def _demand_budget_display(demand: Any) -> dict[str, Any]:
     max_value = _item_value(demand, "budget_max")
     has_min = min_value is not None
     has_max = max_value is not None
-    unit_label = _budget_unit_marketplace_label(_item_value(demand, "intent_type", ""))
+    unit_label = BUDGET_UNIT_LABELS.get(_normalize_budget_unit(_item_value(demand, "budget_unit", "")), "")
     unit_suffix = f" · {unit_label}" if unit_label else ""
     if has_min and has_max:
         try:
@@ -2697,22 +2646,16 @@ def _demand_budget_display(demand: Any) -> dict[str, Any]:
 
 
 def _keyword_suggestions() -> list[str]:
-    registry = get_master_schema_registry()
-    suggestions: list[str] = []
-    seen: set[str] = set()
-    for domain_name in registry.domains.values():
-        candidate = str(domain_name).strip()
-        key = candidate.lower()
-        if candidate and key not in seen:
-            suggestions.append(candidate)
-            seen.add(key)
-    for schema in registry.intent_schemas.values():
-        candidate = str(schema.display_name).strip()
-        key = candidate.lower()
-        if candidate and key not in seen:
-            suggestions.append(candidate)
-            seen.add(key)
-    return sorted(suggestions)
+    return [
+        "clases particulares",
+        "cuidado de niños",
+        "hotel",
+        "fontanero",
+        "electricista",
+        "coche usado",
+        "seguro",
+        "mudanza",
+    ]
 
 
 def _normalize_string_list(values: Optional[list[str]]) -> list[str]:
@@ -2964,57 +2907,6 @@ def _intent_payload_from_form(form: Any) -> dict[str, Any]:
     }
 
 
-def _saved_filter_categories(saved_filter: Optional[dict[str, Any]]) -> tuple[list[str], list[str]]:
-    if not saved_filter:
-        return [], []
-    domains = _normalize_string_list(saved_filter.get("intent_domains") or [])
-    types = _normalize_string_list(saved_filter.get("intent_types") or [])
-    return domains, types
-
-
-def _category_catalog() -> list[dict[str, Any]]:
-    registry = get_master_schema_registry()
-    items: list[dict[str, Any]] = []
-    for domain_code, domain_name in sorted(registry.domains.items(), key=lambda item: item[1].lower()):
-        types = [
-            {
-                "intent_type": schema.intent_type,
-                "display_name": schema.display_name,
-            }
-            for schema in registry.intent_schemas.values()
-            if schema.intent_domain == domain_code
-        ]
-        types.sort(key=lambda item: item["display_name"].lower())
-        items.append(
-            {
-                "code": domain_code,
-                "name": domain_name,
-                "intent_types": types,
-            }
-        )
-    return items
-
-
-def _category_summary(selected_domains: Optional[list[str]], selected_types: Optional[list[str]]) -> str:
-    domains = _normalize_string_list(selected_domains)
-    types = _normalize_string_list(selected_types)
-    if not domains and not types:
-        return "Todas"
-    catalog = {item["code"]: item["name"] for item in _category_catalog()}
-    registry = get_master_schema_registry()
-    if types:
-        first_schema = registry.resolve_intent_schema(types[0])
-        first_domain_name = catalog.get(first_schema.intent_domain, first_schema.intent_domain)
-        if len(types) == 1:
-            return f"{first_domain_name} / {first_schema.display_name}"
-        if len(domains) == 1:
-            return f"{catalog.get(domains[0], domains[0])} + {len(types) - 1}"
-        return f"{len(types)} tipos"
-    if len(domains) == 1:
-        return f"{catalog.get(domains[0], domains[0])}"
-    return f"{len(domains)} dominios"
-
-
 def _redirect(path: str) -> RedirectResponse:
     return RedirectResponse(path, status_code=status.HTTP_303_SEE_OTHER)
 
@@ -3039,6 +2931,411 @@ def _to_json_ready(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: _to_json_ready(item) for key, item in value.items()}
     return value
+
+
+def _normalize_budget_unit(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    aliases = {
+        "": "total",
+        "total": "total",
+        "one-time": "total",
+        "one_time": "total",
+        "overall": "total",
+        "hour": "hour",
+        "per hour": "hour",
+        "hora": "hour",
+        "por hora": "hour",
+        "night": "night",
+        "per night": "night",
+        "noche": "night",
+        "por noche": "night",
+        "day": "day",
+        "per day": "day",
+        "dia": "day",
+        "día": "day",
+        "por dia": "day",
+        "por día": "day",
+        "month": "month",
+        "per month": "month",
+        "mes": "month",
+        "al mes": "month",
+        "item": "item",
+        "product": "item",
+        "producto": "item",
+        "por producto": "item",
+        "service": "service",
+        "servicio": "service",
+        "por servicio": "service",
+    }
+    return aliases.get(normalized, "total")
+
+
+def _coerce_budget_amount(value: Any) -> float | None:
+    raw = str(value or "").strip().replace(",", ".")
+    if not raw:
+        return None
+    try:
+        amount = round(float(raw), 2)
+    except (TypeError, ValueError):
+        return None
+    return amount if amount > 0 else None
+
+
+def _dedupe_text_items(values: list[Any], limit: int = 4) -> list[str]:
+    items: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        key = text.lower()
+        if not text or key in seen:
+            continue
+        items.append(text)
+        seen.add(key)
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _is_structured_optional_suggestion(text: str) -> bool:
+    normalized = (
+        str(text or "")
+        .strip()
+        .lower()
+        .replace("á", "a")
+        .replace("é", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ú", "u")
+    )
+    blocked_tokens = (
+        "ubicacion",
+        "ciudad",
+        "zona",
+        "provincia",
+        "municipio",
+        "localizacion",
+        "direccion",
+        "presupuesto",
+        "precio",
+        "importe",
+        "coste",
+        "costo",
+        "budget",
+        "amount",
+        "location",
+        "price",
+    )
+    return any(token in normalized for token in blocked_tokens)
+
+
+def _filter_suggested_missing_details(values: list[Any], limit: int = 4) -> list[str]:
+    filtered = [value for value in values if not _is_structured_optional_suggestion(str(value or ""))]
+    return _dedupe_text_items(filtered, limit=limit)
+
+
+def _fallback_demand_summary(raw_text: str) -> str:
+    text = " ".join(str(raw_text or "").strip().split())
+    if not text:
+        return ""
+    compact = text.rstrip(".")
+    if len(compact) <= 96:
+        return compact[:1].upper() + compact[1:] + "."
+    shortened = compact[:93].rstrip(" ,;:")
+    return shortened[:1].upper() + shortened[1:] + "..."
+
+
+def _normalize_text_limit(value: Any, *, max_length: int) -> str:
+    text = str(value or "").strip()
+    return text[:max_length].strip()
+
+
+def _normalize_lightweight_known_fields(raw_text: str, known_fields: dict[str, Any] | None = None) -> dict[str, Any]:
+    data = dict(known_fields or {})
+    zone_payload = None
+    for key in ("location_json", "location_zone"):
+        current = data.get(key)
+        if isinstance(current, dict):
+            zone_payload = normalize_zone_payload(current)
+            if zone_payload:
+                break
+    if not zone_payload:
+        location_text = str(
+            data.get("location")
+            or data.get("location_value")
+            or ""
+        ).strip()
+        if location_text:
+            zone_payload = _guess_zone_from_text(location_text, raw_text)
+    if zone_payload:
+        data["location_json"] = zone_payload
+        data["location"] = zone_payload.get("label", "")
+        data["location_value"] = zone_payload.get("label", "")
+    budget_amount = _coerce_budget_amount(
+        data.get("budget_max_amount", data.get("budget_max"))
+    )
+    if budget_amount is not None:
+        data["budget_max"] = budget_amount
+        data["budget_max_amount"] = budget_amount
+    if str(data.get("budget_unit") or "").strip():
+        data["budget_unit"] = _normalize_budget_unit(data.get("budget_unit"))
+    return data
+
+
+def _analyze_lightweight_demand(llm_client: Any, raw_text: str, known_fields: dict[str, Any] | None = None) -> DemandResult:
+    original_text = " ".join(str(raw_text or "").strip().split())
+    normalized_known = _normalize_lightweight_known_fields(original_text, known_fields)
+    analysis_data: dict[str, Any] = {}
+    if original_text:
+        try:
+            analysis_data = parse_json_response(
+                llm_client.analyze(
+                    LIGHTWEIGHT_DEMAND_SYSTEM_PROMPT,
+                    json.dumps(
+                        {
+                            "text": original_text,
+                            "known_fields": {
+                                "location": normalized_known.get("location") or "",
+                                "budget_max_amount": normalized_known.get("budget_max_amount"),
+                                "budget_unit": normalized_known.get("budget_unit"),
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
+            )
+        except Exception as exc:
+            logger.warning("No he podido obtener análisis ligero del LLM: %s", exc)
+            analysis_data = {}
+
+    analysis = LightweightDemandAnalysis.model_validate(analysis_data or {})
+    zone_payload = normalized_known.get("location_json")
+    if not isinstance(zone_payload, dict) or not zone_payload.get("center"):
+        hinted_location = str(analysis.location_hint or "").strip()
+        if hinted_location:
+            zone_payload = _guess_zone_from_text(hinted_location, original_text)
+    zone_payload = normalize_zone_payload(zone_payload) if isinstance(zone_payload, dict) else None
+
+    budget_amount = _coerce_budget_amount(
+        normalized_known.get("budget_max_amount", normalized_known.get("budget_max"))
+    )
+    if budget_amount is None:
+        budget_amount = _coerce_budget_amount(analysis.budget_max)
+    budget_unit_source = normalized_known.get("budget_unit") or analysis.budget_unit
+    budget_unit = _normalize_budget_unit(budget_unit_source)
+    suggestions = _filter_suggested_missing_details(
+        list(normalized_known.get("suggested_missing_details") or []) + list(analysis.suggested_missing_details or [])
+    )
+    summary = str(analysis.summary or "").strip() or _fallback_demand_summary(original_text)
+
+    known = {
+        "location_json": _compact_zone_for_session(zone_payload) if zone_payload else default_zone_payload(),
+        "location": zone_payload.get("label", "") if zone_payload else "",
+        "location_value": zone_payload.get("label", "") if zone_payload else "",
+        "budget_max": budget_amount,
+        "budget_max_amount": budget_amount,
+        "budget_unit": budget_unit,
+        "suggested_missing_details": suggestions,
+    }
+    llm_metadata = {
+        "suggested_missing_details": suggestions,
+        "confidence": analysis.confidence,
+        "location_hint": analysis.location_hint,
+    }
+    return DemandResult(
+        raw_text=original_text,
+        summary=summary,
+        description=original_text,
+        location_mode=zone_payload.get("mode", "unspecified") if zone_payload else "unspecified",
+        location_value=zone_payload.get("label") if zone_payload else None,
+        location_label=zone_payload.get("label") if zone_payload else None,
+        location_admin_level=zone_payload.get("admin_level") if zone_payload else None,
+        location_lat=(zone_payload.get("center") or {}).get("lat") if zone_payload else None,
+        location_lon=(zone_payload.get("center") or {}).get("lon") if zone_payload else None,
+        location_radius_km=zone_payload.get("radius_km") if zone_payload else None,
+        location_radius_bucket=zone_payload.get("radius_bucket") if zone_payload else None,
+        location_source=zone_payload.get("source") if zone_payload else None,
+        location_raw_query=zone_payload.get("raw_query") if zone_payload else None,
+        location_json=zone_payload or {},
+        location=zone_payload.get("label") if zone_payload else None,
+        budget_max=budget_amount,
+        budget_unit=budget_unit,
+        attributes={},
+        known_fields=known,
+        suggested_missing_details=suggestions,
+        next_question=None,
+        enough_information=len(original_text) >= 8,
+        confidence=analysis.confidence,
+        llm_metadata=llm_metadata,
+    )
+
+
+def _simple_fields_to_complete(draft: DemandResult) -> list[dict[str, Any]]:
+    return [
+        {
+            "field_name": "location",
+            "field_label": "Ubicación",
+            "question": "Ubicación",
+            "current_value": draft.location_value or "",
+            "control": {
+                "kind": "zone_selector",
+                "value": draft.location_json or default_zone_payload(),
+            },
+        },
+        {
+            "field_name": "budget_max_amount",
+            "field_label": "Precio máximo",
+            "question": "Precio máximo",
+            "current_value": draft.budget_max,
+            "control": {"kind": "number", "value": draft.budget_max, "min": "0.01", "step": "0.01"},
+        },
+        {
+            "field_name": "budget_unit",
+            "field_label": "Unidad del precio",
+            "question": "Unidad del precio",
+            "current_value": draft.budget_unit,
+            "control": {"kind": "select", "value": draft.budget_unit, "options": BUDGET_UNIT_OPTIONS},
+        },
+    ]
+
+
+def _api_location_payload(zone: Any) -> Optional[dict[str, Any]]:
+    payload = normalize_zone_payload(zone if isinstance(zone, dict) else {})
+    if not payload:
+        return None
+    center = payload.get("center") or {}
+    lat = center.get("lat")
+    lon = center.get("lon")
+    label = str(payload.get("label") or "").strip()
+    display = compact_zone_label(label, payload.get("raw_query"))
+    if not label and lat is None and lon is None:
+        return None
+    return {
+        "label": label or display or None,
+        "display": display or label or None,
+        "center": {"lat": lat, "lon": lon} if lat is not None and lon is not None else None,
+        "radius_km": payload.get("radius_km"),
+    }
+
+
+def _api_fields_to_complete_payload(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    serialized: list[dict[str, Any]] = []
+    for entry in fields:
+        item = dict(entry)
+        control = dict(item.get("control") or {})
+        if control.get("kind") == "zone_selector":
+            control["value"] = _api_location_payload(control.get("value"))
+        item["control"] = control
+        serialized.append(item)
+    return serialized
+
+
+def _api_analysis_payload(payload: dict[str, Any], *, verbose: bool = False) -> dict[str, Any]:
+    known_fields = dict(payload.get("known_fields") or {})
+    compact = {
+        "status": payload.get("status"),
+        "publish_ready": bool(payload.get("publish_ready")),
+        "original_text": payload.get("original_text"),
+        "summary": payload.get("summary"),
+        "suggested_missing_details": list(payload.get("suggested_missing_details") or []),
+        "known_fields": {
+            "location": _api_location_payload(known_fields.get("location_json"))
+            or _api_location_payload(known_fields.get("location")),
+            "budget_max_amount": known_fields.get("budget_max_amount"),
+            "budget_unit": known_fields.get("budget_unit") or "total",
+        },
+        "fields_to_complete": _api_fields_to_complete_payload(list(payload.get("fields_to_complete") or [])),
+        "publish_endpoint": payload.get("publish_endpoint") or "/api/agent/demands/publish",
+    }
+    if verbose:
+        draft = dict(payload.get("draft") or {})
+        compact["draft"] = {
+            "raw_text": draft.get("raw_text"),
+            "summary": draft.get("summary"),
+            "location": _api_location_payload(draft.get("location_json")),
+            "budget_max_amount": draft.get("budget_max"),
+            "budget_unit": draft.get("budget_unit") or "total",
+            "suggested_missing_details": list(draft.get("suggested_missing_details") or []),
+            "confidence": draft.get("confidence"),
+        }
+    return compact
+
+
+def _api_published_demand_payload(demand: Any) -> dict[str, Any]:
+    if hasattr(demand, "model_dump"):
+        data = demand.model_dump(mode="json")
+    elif isinstance(demand, dict):
+        data = dict(demand)
+    else:
+        data = {}
+    return {
+        "id": data.get("id"),
+        "summary": data.get("summary"),
+        "original_text": data.get("original_text") or "",
+        "location": _api_location_payload(data.get("location_json"))
+        or (
+            {
+                "label": data.get("location_label") or data.get("location"),
+                "display": data.get("location_display") or data.get("location_label") or data.get("location"),
+                "center": (
+                    {"lat": data.get("location_lat"), "lon": data.get("location_lon")}
+                    if data.get("location_lat") is not None and data.get("location_lon") is not None
+                    else None
+                ),
+                "radius_km": data.get("location_radius_km"),
+            }
+            if any(
+                value is not None and value != ""
+                for value in (
+                    data.get("location"),
+                    data.get("location_label"),
+                    data.get("location_lat"),
+                    data.get("location_lon"),
+                    data.get("location_radius_km"),
+                )
+            )
+            else None
+        ),
+        "budget_max_amount": data.get("budget_max"),
+        "budget_unit": data.get("budget_unit") or "total",
+        "status": data.get("effective_status") or data.get("status") or "open",
+        "created_at": data.get("created_at"),
+        "expires_at": data.get("expires_at"),
+    }
+
+
+def _build_lightweight_publication_context(llm_client: Any, raw_text: str, known_fields: dict[str, Any] | None = None, *, verbose: bool = False) -> dict[str, Any]:
+    original_text = _normalize_text_limit(raw_text, max_length=DEMAND_TEXT_MAX_LENGTH)
+    if len(original_text) < 4:
+        raise HTTPException(status_code=400, detail="El campo text debe contener la demanda original")
+    if len(str(raw_text or "").strip()) > DEMAND_TEXT_MAX_LENGTH:
+        raise HTTPException(status_code=400, detail=f"El campo text no puede superar {DEMAND_TEXT_MAX_LENGTH} caracteres")
+    if known_fields is not None and not isinstance(known_fields, dict):
+        raise HTTPException(status_code=400, detail="known_fields debe ser un objeto JSON")
+
+    draft = _analyze_lightweight_demand(llm_client, original_text, known_fields)
+    state = SessionState(
+        original_text=draft.raw_text,
+        known_fields=draft.known_fields,
+        summary=draft.summary,
+    )
+    fields_to_complete = _simple_fields_to_complete(draft)
+    payload = {
+        "status": "ready_to_publish" if draft.enough_information else "needs_input",
+        "publish_ready": draft.enough_information,
+        "original_text": draft.raw_text,
+        "summary": draft.summary,
+        "suggested_missing_details": list(draft.suggested_missing_details),
+        "known_fields": {
+            "location": _api_location_payload(draft.location_json),
+            "budget_max_amount": draft.budget_max,
+            "budget_unit": draft.budget_unit,
+        },
+        "fields_to_complete": fields_to_complete,
+        "publish_endpoint": "/api/agent/demands/publish",
+    }
+    if verbose:
+        payload["draft"] = draft.model_dump(mode="json")
+    return {"state": state, "draft": draft, "payload": payload}
 
 
 def _sse_event(event_name: str, payload: str) -> str:
@@ -3066,6 +3363,33 @@ def _build_demands_workspace(demands: list[dict[str, Any]], selected_demand_id: 
         chosen_offer = next((c for c in chosen_demand.get("conversations", []) if c["offer_id"] == selected_offer_id), None)
 
     return {"selected_demand": chosen_demand, "selected_offer": chosen_offer}
+
+
+def _simple_wizard_session(
+    draft: DemandResult,
+    *,
+    wizard_mode: str,
+    step: str,
+    target_demand_id: int | None = None,
+    awaiting_auth: bool = False,
+    published_message: str = "",
+) -> dict[str, Any]:
+    state = SessionState(
+        original_text=draft.raw_text,
+        known_fields=draft.known_fields,
+        summary=draft.summary,
+    )
+    return {
+        "flow_version": "simple_free_text",
+        "mode": wizard_mode,
+        "step": step,
+        "target_demand_id": target_demand_id,
+        "return_path": _wizard_return_path(wizard_mode, target_demand_id),
+        "awaiting_auth": awaiting_auth,
+        "published_message": published_message,
+        "state": _state_to_session(state),
+        "draft": draft.model_dump(mode="json"),
+    }
 
 
 def _build_offers_workspace(offers: list[dict[str, Any]], selected_offer_id: int | None) -> dict[str, Any]:
@@ -3355,31 +3679,24 @@ def _build_wizard_session(
 
 def _inflate_wizard_for_view(wizard: dict[str, Any]) -> dict[str, Any]:
     view = dict(wizard)
-    state = _session_to_state(view.get("state", {}))
-    registry = get_master_schema_registry()
-    if view.get("step") == "review":
-        response = _response_from_wizard(view)
-        schema = registry.resolve_intent_schema(response.intent_type)
+    if view.get("flow_version") == "simple_free_text":
+        draft = DemandResult.model_validate(view.get("draft") or {})
+        state = _session_to_state(view.get("state", {}))
+        zone_payload = normalize_zone_payload(draft.location_json) if isinstance(draft.location_json, dict) else None
+        view["draft"] = draft
+        view["draft_debug_json"] = draft.model_dump(mode="json")
+        view["state"] = state
         view["field_entries"] = []
-        view["answered_fields"] = list(view.get("answered_fields", []))
-        view["schema_domain_display_name"] = registry.domains.get(schema.intent_domain, schema.intent_domain)
-        view["schema_display_name"] = schema.display_name
-        view["schema_required_fields"] = list(schema.active_required_fields(state.known_fields))
-        view["schema_debug_outline"] = _schema_debug_outline(schema)
-        view["intent_schema_json"] = _raw_intent_schema_payload(schema.intent_type)
-        view["intent_schema_admin_url"] = f"/admin/schema?intent_type={quote(schema.intent_type)}" if schema.intent_type else "/admin/schema"
-        view["published_message"] = _published_confirmation_message(state, view.get("review_demand", {}))
-    else:
-        response = _response_from_wizard(view)
-        schema = registry.resolve_intent_schema(response.intent_type)
-        view["field_entries"] = _build_field_entries(state, response, view.get("field_errors", {}))
         view["answered_fields"] = []
-        view["schema_domain_display_name"] = registry.domains.get(schema.intent_domain, schema.intent_domain)
-        view["schema_display_name"] = schema.display_name
-        view["schema_required_fields"] = list(schema.active_required_fields(state.known_fields))
-        view["schema_debug_outline"] = _schema_debug_outline(schema)
-        view["intent_schema_json"] = _raw_intent_schema_payload(schema.intent_type)
-        view["intent_schema_admin_url"] = f"/admin/schema?intent_type={quote(schema.intent_type)}" if schema.intent_type else "/admin/schema"
+        view["location_zone"] = _compact_zone_for_session(zone_payload or {})
+        view["budget_unit_options"] = BUDGET_UNIT_OPTIONS
+        view["suggested_missing_details"] = list(draft.suggested_missing_details)
+        return view
+    view["state"] = _session_to_state(view.get("state", {}))
+    view["field_entries"] = []
+    view["answered_fields"] = list(view.get("answered_fields", []))
+    view["budget_unit_options"] = BUDGET_UNIT_OPTIONS
+    view["suggested_missing_details"] = []
     return view
 
 
@@ -4278,75 +4595,7 @@ def _collect_answered_fields(state: SessionState, field_entries: list[dict[str, 
 
 
 def _demand_detail_answered_fields(demand: dict[str, Any]) -> list[dict[str, str]]:
-    registry = get_master_schema_registry()
-    intent_type = str(demand.get("intent_type") or "")
-    schema = registry.resolve_intent_schema(intent_type)
-    normalized_payload = demand.get("normalized_payload") or {}
-    raw_text = str(normalized_payload.get("raw_text") or demand.get("summary") or "").strip()
-    known_fields = merge_known_fields(
-        normalized_payload.get("known_fields") or {},
-        demand.get("attributes") or {},
-    )
-    excluded = {
-        "summary",
-        "description",
-        "intent_domain",
-        "intent_type",
-        "city",
-        "dates",
-        "start_date",
-        "end_date",
-        "budget_min",
-        "budget_max",
-        "budget_mode",
-        "budget_total",
-        "budget_range",
-        "budget_currency",
-        "location",
-        "location_value",
-        "location_mode",
-        "location_label",
-        "location_structured",
-        "location_city",
-        "location_json",
-        "city",
-        "search_location",
-        "location_question",
-        "budget_question",
-    }
-    entries: list[dict[str, str]] = []
-    seen: set[str] = set()
-
-    def append_entry(field_name: str, value: Any) -> None:
-        if field_name in seen or field_name in excluded or not _has_content(value):
-            return
-        control = _field_control(field_name, value, schema.intent_type, schema.intent_domain, raw_text)
-        question = get_field_prompt(
-            field_name,
-            raw_text,
-            schema.intent_type,
-            schema.intent_domain,
-            field_description=schema.field_spec(field_name).description,
-        ).get("question", field_name)
-        entries.append(
-            {
-                "field_name": field_name,
-                "question": _detail_question_label(question),
-                "answer": _format_answer_for_review(value, control),
-            }
-        )
-        seen.add(field_name)
-
-    for field in schema.fields:
-        append_entry(field.name, known_fields.get(field.name))
-
-    for key, value in known_fields.items():
-        key_str = str(key)
-        if key_str.startswith("location_") or key_str.startswith("budget_"):
-            continue
-        append_entry(str(key), value)
-
-    return entries
+    return []
 
 
 def _extract_field_answer(form, field_name: str, control: dict[str, Any]) -> Any:
@@ -4559,6 +4808,8 @@ def _format_review_date(value: Any) -> str:
 
 def _compact_zone_for_session(zone: Any) -> dict[str, Any]:
     payload = normalize_zone_payload(zone if isinstance(zone, dict) else {})
+    if not payload:
+        return default_zone_payload()
     if not (
         payload.get("label")
         or (
@@ -4702,7 +4953,10 @@ def _complete_pending_guest_publication(request: Request, user: Any) -> str | No
         return None
     try:
         state = _session_to_state(wizard.get("state", {}))
-        draft = DemandResult.model_validate(wizard.get("review_demand") or {})
+        if wizard.get("flow_version") == "simple_free_text":
+            draft = DemandResult.model_validate(wizard.get("draft") or {})
+        else:
+            draft = DemandResult.model_validate(wizard.get("review_demand") or {})
         save_web_demand_from_agent(user.id, draft, state)
     except Exception:
         return None
@@ -4790,11 +5044,8 @@ def _home_pagination(
     total_pages: int,
     q: str,
     location: str,
-    intent_type: str,
     zone_filter: Optional[dict[str, Any]],
     saved_filter_id: int | None,
-    intent_domains: Optional[list[str]] = None,
-    intent_types: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     def page_url(target_page: int) -> str:
         params: dict[str, Any] = {"page": target_page}
@@ -4802,12 +5053,6 @@ def _home_pagination(
             params["q"] = q
         if location:
             params["location"] = location
-        if intent_type:
-            params["intent_type"] = intent_type
-        if intent_domains:
-            params["intent_domains_json"] = json.dumps(_normalize_string_list(intent_domains), ensure_ascii=False)
-        if intent_types:
-            params["intent_types_json"] = json.dumps(_normalize_string_list(intent_types), ensure_ascii=False)
         if zone_filter:
             params["location_zone_json"] = json.dumps(_compact_zone_for_query(zone_filter), ensure_ascii=False)
         if saved_filter_id:

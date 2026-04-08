@@ -46,8 +46,8 @@
             <strong>{{ demand.summary }}</strong>
             <span class="pill soft">{{ demand.status }}</span>
           </div>
-          <p class="small-note">{{ demand.intent_type }} · {{ demand.created_at.strftime("%d/%m/%Y %H:%M") if demand.created_at else "" }}</p>
-          <a href="/demands/{{ demand.id }}" class="row-link-tool">Ver demanda</a>
+          <p class="small-note">{{ demand.created_at.strftime("%d/%m/%Y %H:%M") if demand.created_at else "" }}</p>
+          <a href="/demands/{{ demand.public_id }}" class="row-link-tool">Ver demanda</a>
         </div>
       {% else %}
         <p class="small-note">Este usuario todavía no ha publicado demandas.</p>
@@ -64,7 +64,7 @@
             <strong>{{ offer.demand_summary }}</strong>
             <span class="pill soft">{{ offer.demand_status }}</span>
           </div>
-          <p class="small-note">{{ offer.intent_type }} · {{ offer.created_at.strftime("%d/%m/%Y %H:%M") if offer.created_at else "" }}</p>
+          <p class="small-note">{{ offer.created_at.strftime("%d/%m/%Y %H:%M") if offer.created_at else "" }}</p>
           <a href="/app/chats?role=supplier&offer_id={{ offer.id }}" class="row-link-tool">Ver conversación</a>
         </div>
       {% else %}

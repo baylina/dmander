@@ -21,7 +21,14 @@ from typing import Any, Optional
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-from demand_normalizer import normalize_existing_demand_record
+from embedding_service import (
+    build_demand_search_text,
+    cosine_similarity,
+    embed_document_text,
+    embed_query_text,
+    embedding_model_name,
+    rerank_demand_candidates,
+)
 from location_geometry import radius_limit_km, zone_has_geometry, zones_intersect
 from master_schema import get_master_schema_registry
 from models import APITokenInfo, DemandResult, OfferMessageResult, OfferResult, PublicDemand, SessionState, UserProfile
@@ -32,6 +39,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_DEMAND_EXPIRY_HOURS = 48
 EXPIRED_CONVERSATION_GRACE_DAYS = 7
 PASSWORD_RESET_TOKEN_HOURS = 2
+MAGIC_LOGIN_TOKEN_MINUTES = 30
+DEMAND_TEXT_MAX_LENGTH = 200
+MESSAGE_TEXT_MAX_LENGTH = 200
 _POSTGIS_AVAILABLE: Optional[bool] = None
 SUPERADMIN_EMAILS = {
     email.strip().lower()
@@ -71,6 +81,7 @@ CREATE TABLE IF NOT EXISTS oauth_accounts (
 CREATE_DEMANDS_SQL = """
 CREATE TABLE IF NOT EXISTS demands (
     id               SERIAL PRIMARY KEY,
+    public_id        TEXT UNIQUE,
     telegram_user_id BIGINT,
     user_id          INTEGER REFERENCES users(id) ON DELETE SET NULL,
     intent_domain    TEXT,
@@ -79,6 +90,7 @@ CREATE TABLE IF NOT EXISTS demands (
     location         TEXT,
     budget_min       REAL,
     budget_max       REAL,
+    budget_unit      TEXT NOT NULL DEFAULT 'total',
     urgency          TEXT,
     location_mode    TEXT,
     location_label   TEXT,
@@ -94,6 +106,7 @@ CREATE TABLE IF NOT EXISTS demands (
     location_json    JSONB DEFAULT '{}'::jsonb,
     attributes       JSONB DEFAULT '{}',
     normalized_payload JSONB DEFAULT '{}'::jsonb,
+    llm_metadata     JSONB DEFAULT '{}'::jsonb,
     schema_version   TEXT,
     original_text    TEXT,
     conversation     JSONB DEFAULT '[]',
@@ -190,7 +203,27 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 );
 """
 
+CREATE_MAGIC_LOGIN_TOKENS_SQL = """
+CREATE TABLE IF NOT EXISTS magic_login_tokens (
+    id          SERIAL PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    purpose     TEXT NOT NULL DEFAULT 'telegram_web_login',
+    token_hash  TEXT NOT NULL UNIQUE,
+    expires_at  TIMESTAMP NOT NULL,
+    used_at     TIMESTAMP,
+    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+);
+"""
+
+CREATE_APP_MIGRATIONS_SQL = """
+CREATE TABLE IF NOT EXISTS app_migrations (
+    key         TEXT PRIMARY KEY,
+    applied_at  TIMESTAMP NOT NULL DEFAULT NOW()
+);
+"""
+
 CREATE_INDEXES_SQL = [
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_demands_public_id_unique ON demands(public_id) WHERE public_id IS NOT NULL;",
     "CREATE INDEX IF NOT EXISTS idx_demands_user_id ON demands(user_id);",
     "CREATE INDEX IF NOT EXISTS idx_demands_status_created_at ON demands(status, created_at DESC);",
     "CREATE INDEX IF NOT EXISTS idx_offers_demand_id ON offers(demand_id);",
@@ -200,6 +233,7 @@ CREATE_INDEXES_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_demand_wizards_updated_at ON demand_wizards(updated_at DESC);",
     "CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id, created_at DESC);",
     "CREATE INDEX IF NOT EXISTS idx_api_tokens_user_id ON api_tokens(user_id, created_at DESC);",
+    "CREATE INDEX IF NOT EXISTS idx_magic_login_tokens_user_id ON magic_login_tokens(user_id, created_at DESC);",
 ]
 
 POSTGIS_ALTERS_SQL = [
@@ -215,6 +249,7 @@ POSTGIS_INDEXES_SQL = [
 ]
 
 ALTERS_SQL = [
+    "ALTER TABLE demands ADD COLUMN IF NOT EXISTS public_id TEXT;",
     "ALTER TABLE demands ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;",
     "ALTER TABLE demands ADD COLUMN IF NOT EXISTS intent_domain TEXT;",
     "ALTER TABLE demands ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open';",
@@ -222,7 +257,9 @@ ALTERS_SQL = [
     "ALTER TABLE demands ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP DEFAULT (NOW() + interval '48 hours');",
     "ALTER TABLE demands ADD COLUMN IF NOT EXISTS created_via TEXT NOT NULL DEFAULT 'telegram';",
     "ALTER TABLE demands ADD COLUMN IF NOT EXISTS normalized_payload JSONB DEFAULT '{}'::jsonb;",
+    "ALTER TABLE demands ADD COLUMN IF NOT EXISTS llm_metadata JSONB DEFAULT '{}'::jsonb;",
     "ALTER TABLE demands ADD COLUMN IF NOT EXISTS schema_version TEXT;",
+    "ALTER TABLE demands ADD COLUMN IF NOT EXISTS budget_unit TEXT NOT NULL DEFAULT 'total';",
     "ALTER TABLE demands ADD COLUMN IF NOT EXISTS location_mode TEXT;",
     "ALTER TABLE demands ADD COLUMN IF NOT EXISTS location_label TEXT;",
     "ALTER TABLE demands ADD COLUMN IF NOT EXISTS location_lat DOUBLE PRECISION;",
@@ -305,6 +342,39 @@ def _hash_api_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def _hash_magic_login_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _telegram_placeholder_email(telegram_user_id: int) -> str:
+    return f"telegram_{int(telegram_user_id)}@telegram.local"
+
+
+def _telegram_display_name(username: str | None, first_name: str | None, last_name: str | None) -> str:
+    first = str(first_name or "").strip()
+    last = str(last_name or "").strip()
+    full_name = " ".join(piece for piece in (first, last) if piece).strip()
+    if full_name:
+        return full_name
+    username_value = str(username or "").strip()
+    if username_value:
+        return f"@{username_value}"
+    return "Usuario de Telegram"
+
+
+def _generate_demand_public_id() -> str:
+    return f"dmd_{secrets.token_urlsafe(9).replace('-', '').replace('_', '')[:12]}"
+
+
+def _next_demand_public_id(cur) -> str:
+    public_id = _generate_demand_public_id()
+    while True:
+        cur.execute("SELECT 1 FROM demands WHERE public_id = %s", (public_id,))
+        if not cur.fetchone():
+            return public_id
+        public_id = _generate_demand_public_id()
+
+
 def hash_password(password: str) -> str:
     """Genera un hash con scrypt usando solo librerías estándar."""
     salt = secrets.token_bytes(16)
@@ -343,6 +413,8 @@ def init_db() -> None:
                 cur.execute(CREATE_DEMAND_WIZARDS_SQL)
                 cur.execute(CREATE_PASSWORD_RESET_TOKENS_SQL)
                 cur.execute(CREATE_API_TOKENS_SQL)
+                cur.execute(CREATE_MAGIC_LOGIN_TOKENS_SQL)
+                cur.execute(CREATE_APP_MIGRATIONS_SQL)
                 for statement in ALTERS_SQL:
                     cur.execute(statement)
                 if postgis_available:
@@ -364,6 +436,8 @@ def init_db() -> None:
                         """,
                         (list(SUPERADMIN_EMAILS),),
                     )
+                _ensure_demand_public_ids(cur)
+                _apply_product_pivot_reset(cur)
         conn.close()
         logger.info("✅ Base de datos inicializada correctamente.")
     except psycopg2.OperationalError as e:
@@ -371,12 +445,92 @@ def init_db() -> None:
         raise
 
 
+def _apply_product_pivot_reset(cur) -> None:
+    cur.execute("SELECT 1 FROM app_migrations WHERE key = %s", ("pivot_free_text_v1",))
+    if cur.fetchone():
+        return
+    cur.execute("DELETE FROM offer_messages")
+    cur.execute("DELETE FROM offers")
+    cur.execute("DELETE FROM demands")
+    cur.execute("DELETE FROM saved_filters")
+    cur.execute("DELETE FROM demand_wizards")
+    cur.execute("INSERT INTO app_migrations (key) VALUES (%s)", ("pivot_free_text_v1",))
+    logger.info("🧹 Migración pivot_free_text_v1 aplicada: demandas, conversaciones y filtros antiguos eliminados.")
+
+
+def _ensure_demand_public_ids(cur) -> None:
+    cur.execute("SELECT id FROM demands WHERE public_id IS NULL OR public_id = ''")
+    rows = cur.fetchall()
+    for row in rows:
+        public_id = _next_demand_public_id(cur)
+        cur.execute("UPDATE demands SET public_id = %s WHERE id = %s", (public_id, row["id"]))
+
+
 def _schema_registry():
     return get_master_schema_registry()
 
+def _budget_unit_label(unit: str) -> str:
+    normalized = str(unit or "total").strip().lower()
+    labels = {
+        "total": "",
+        "hour": "por hora",
+        "day": "por día",
+        "night": "por noche",
+        "month": "al mes",
+        "item": "por producto",
+        "service": "por servicio",
+    }
+    return labels.get(normalized, "")
 
-def _normalized_payload_for_row(row: dict[str, Any]) -> dict[str, Any]:
-    return normalize_existing_demand_record(dict(row), _schema_registry())
+
+def _lightweight_payload_for_row(row: dict[str, Any]) -> dict[str, Any]:
+    data = dict(row)
+    attributes = dict(data.get("attributes") or {})
+    llm_metadata = dict(data.get("llm_metadata") or {})
+    original_text = str(data.get("original_text") or attributes.get("description") or data.get("summary") or "").strip()
+    summary = str(data.get("summary") or original_text).strip() or original_text
+    location_json = dict(data.get("location_json") or {})
+    location_label = str(data.get("location_label") or location_json.get("label") or data.get("location") or "").strip()
+    budget_max = data.get("budget_max")
+    budget_unit = str(data.get("budget_unit") or llm_metadata.get("budget_unit") or "total").strip().lower() or "total"
+    return {
+        "raw_text": original_text,
+        "summary": summary,
+        "location_value": location_label or None,
+        "location_label": location_label or None,
+        "location_json": location_json,
+        "budget_max_amount": budget_max,
+        "budget_max": budget_max,
+        "budget_unit": budget_unit,
+        "budget_unit_label": _budget_unit_label(budget_unit),
+        "suggested_missing_details": list(llm_metadata.get("suggested_missing_details") or []),
+        "llm_metadata": llm_metadata,
+    }
+
+
+def _enrich_search_metadata(
+    *,
+    raw_text: str,
+    summary: str,
+    location_label: str = "",
+    budget_max: Any = None,
+    budget_unit: str = "total",
+    llm_metadata: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    payload = dict(llm_metadata or {})
+    search_text = build_demand_search_text(
+        raw_text,
+        summary=summary,
+        location_label=location_label,
+        budget_max=budget_max,
+        budget_unit=budget_unit,
+        suggested_missing_details=list(payload.get("suggested_missing_details") or []),
+    )
+    payload["search_text"] = search_text
+    payload["embedding_model"] = embedding_model_name()
+    payload["search_embedding"] = embed_document_text(search_text)
+    payload["embedding_updated_at"] = datetime.now(timezone.utc).isoformat()
+    return payload
 
 
 def _expire_open_demands(cur) -> None:
@@ -393,9 +547,13 @@ def _expire_open_demands(cur) -> None:
 
 def _hydrate_demand_row(row: dict[str, Any]) -> dict[str, Any]:
     data = dict(row)
-    data["normalized_payload"] = _normalized_payload_for_row(data)
-    data["intent_domain"] = data.get("intent_domain") or data["normalized_payload"].get("intent_domain", "")
+    data["public_id"] = str(data.get("public_id") or "")
     data["attributes"] = dict(data.get("attributes") or {})
+    data["llm_metadata"] = dict(data.get("llm_metadata") or {})
+    data["normalized_payload"] = _lightweight_payload_for_row(data)
+    data["intent_domain"] = ""
+    data["intent_type"] = "free_text"
+    data["original_text"] = data["normalized_payload"].get("raw_text", "")
     if not data.get("location"):
         data["location"] = data["normalized_payload"].get("location_value")
     if not data.get("location_json"):
@@ -403,33 +561,34 @@ def _hydrate_demand_row(row: dict[str, Any]) -> dict[str, Any]:
     if not data.get("location_mode"):
         data["location_mode"] = (
             data.get("location_json", {}).get("mode")
-            or data["normalized_payload"].get("location_mode")
             or ("radius_from_point" if data.get("location_lat") is not None and data.get("location_lon") is not None else "unspecified")
         )
     if not data.get("location_label"):
         data["location_label"] = data["normalized_payload"].get("location_label") or data.get("location")
     if not data.get("location_admin_level"):
-        data["location_admin_level"] = data.get("location_json", {}).get("admin_level") or data["normalized_payload"].get("location_admin_level")
+        data["location_admin_level"] = data.get("location_json", {}).get("admin_level")
     if data.get("location_lat") is None:
-        data["location_lat"] = data["normalized_payload"].get("location_lat")
+        data["location_lat"] = (data.get("location_json") or {}).get("center", {}).get("lat")
     if data.get("location_lon") is None:
-        data["location_lon"] = data["normalized_payload"].get("location_lon")
+        data["location_lon"] = (data.get("location_json") or {}).get("center", {}).get("lon")
     if data.get("location_radius_km") is None:
-        data["location_radius_km"] = data["normalized_payload"].get("location_radius_km")
+        data["location_radius_km"] = (data.get("location_json") or {}).get("radius_km")
     if not data.get("location_radius_bucket"):
-        data["location_radius_bucket"] = data["normalized_payload"].get("location_radius_bucket")
+        data["location_radius_bucket"] = (data.get("location_json") or {}).get("radius_bucket")
     if not data.get("location_source"):
-        data["location_source"] = data["normalized_payload"].get("location_source")
+        data["location_source"] = (data.get("location_json") or {}).get("source")
     if not data.get("location_raw_query"):
-        data["location_raw_query"] = data["normalized_payload"].get("location_raw_query")
+        data["location_raw_query"] = (data.get("location_json") or {}).get("raw_query")
     if not data.get("location_bbox"):
-        data["location_bbox"] = data.get("location_json", {}).get("bbox") or data["normalized_payload"].get("location_bbox") or []
+        data["location_bbox"] = []
     if not data.get("location_geojson"):
-        data["location_geojson"] = data.get("location_json", {}).get("geojson") or data["normalized_payload"].get("location_geojson") or {}
+        data["location_geojson"] = {}
     data["location_display"] = compact_zone_label(
         data.get("location_label") or data.get("location"),
         data.get("location_raw_query"),
     )
+    data["budget_unit"] = str(data.get("budget_unit") or data["normalized_payload"].get("budget_unit") or "total").strip().lower() or "total"
+    data["suggested_missing_details"] = list(data["normalized_payload"].get("suggested_missing_details") or [])
     effective_status = data.get("status") or "open"
     data["effective_status"] = effective_status
     data["is_pinned"] = bool(data.get("is_pinned"))
@@ -482,6 +641,31 @@ def _matches_category_filter(
     if selected_domains:
         return (row.get("intent_domain") or "") in selected_domains
     return True
+
+
+def _demand_search_document(row: dict[str, Any]) -> str:
+    llm_metadata = dict(row.get("llm_metadata") or {})
+    suggestions = " ".join(str(item) for item in llm_metadata.get("suggested_missing_details") or [])
+    return " ".join(
+        part
+        for part in [
+            llm_metadata.get("search_text"),
+            row.get("summary"),
+            row.get("original_text"),
+            row.get("location"),
+            row.get("location_label"),
+            suggestions,
+        ]
+        if part
+    )
+
+
+def _semantic_match_score(row: dict[str, Any], query_embedding: list[float] | tuple[float, ...]) -> float:
+    if not query_embedding:
+        return 0.0
+    llm_metadata = dict(row.get("llm_metadata") or {})
+    document_embedding = llm_metadata.get("search_embedding") or []
+    return cosine_similarity(query_embedding, document_embedding)
 
 
 def _location_shape_sql(alias: str) -> str:
@@ -782,6 +966,161 @@ def get_or_create_oauth_user(
         conn.close()
 
 
+def get_or_create_telegram_user(
+    telegram_user_id: int,
+    username: str | None = None,
+    first_name: str | None = None,
+    last_name: str | None = None,
+) -> UserProfile:
+    provider_user_id = str(int(telegram_user_id))
+    placeholder_email = _telegram_placeholder_email(telegram_user_id)
+    full_name = _telegram_display_name(username, first_name, last_name)
+    conn = _get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT u.id, u.email, u.full_name, u.password_hash, u.avatar_url, u.auth_source, u.role, u.is_active, u.last_login_at, u.created_at
+                    FROM oauth_accounts oa
+                    JOIN users u ON u.id = oa.user_id
+                    WHERE oa.provider = 'telegram' AND oa.provider_user_id = %s
+                    """,
+                    (provider_user_id,),
+                )
+                row = cur.fetchone()
+                if row:
+                    user = _row_to_user(row)
+                    cur.execute(
+                        """
+                        UPDATE users
+                        SET full_name = %s,
+                            auth_source = 'telegram',
+                            last_login_at = NOW(),
+                            updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (full_name, user.id),
+                    )
+                    return get_user_by_id(user.id) or user
+
+                cur.execute(
+                    """
+                    SELECT id, email, full_name, password_hash, avatar_url, auth_source, role, is_active, last_login_at, created_at
+                    FROM users
+                    WHERE email = %s
+                    """,
+                    (placeholder_email,),
+                )
+                row = cur.fetchone()
+                if row:
+                    user = _row_to_user(row)
+                    cur.execute(
+                        """
+                        UPDATE users
+                        SET full_name = %s,
+                            auth_source = 'telegram',
+                            last_login_at = NOW(),
+                            updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (full_name, user.id),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO users (email, full_name, auth_source, role, last_login_at)
+                        VALUES (%s, %s, 'telegram', 'user', NOW())
+                        RETURNING id, email, full_name, password_hash, avatar_url, auth_source, role, is_active, last_login_at, created_at
+                        """,
+                        (placeholder_email, full_name),
+                    )
+                    user = _row_to_user(cur.fetchone())
+
+                cur.execute(
+                    """
+                    INSERT INTO oauth_accounts (user_id, provider, provider_user_id, provider_email)
+                    VALUES (%s, 'telegram', %s, %s)
+                    ON CONFLICT (provider, provider_user_id) DO UPDATE
+                    SET provider_email = EXCLUDED.provider_email
+                    """,
+                    (user.id, provider_user_id, placeholder_email),
+                )
+
+                return get_user_by_id(user.id) or user
+    finally:
+        conn.close()
+
+
+def create_magic_login_token(user_id: int, purpose: str = "telegram_web_login") -> str:
+    plain_token = secrets.token_urlsafe(32)
+    token_hash = _hash_magic_login_token(plain_token)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=MAGIC_LOGIN_TOKEN_MINUTES)
+    conn = _get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO magic_login_tokens (user_id, purpose, token_hash, expires_at)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (user_id, purpose, token_hash, expires_at),
+                )
+        return plain_token
+    finally:
+        conn.close()
+
+
+def consume_magic_login_token(token: str, purpose: str = "telegram_web_login") -> Optional[UserProfile]:
+    token_hash = _hash_magic_login_token(token)
+    conn = _get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT m.id AS magic_token_id,
+                           u.id, u.email, u.full_name, u.password_hash, u.avatar_url, u.auth_source, u.role, u.is_active, u.last_login_at, u.created_at
+                    FROM magic_login_tokens m
+                    JOIN users u ON u.id = m.user_id
+                    WHERE m.token_hash = %s
+                      AND m.purpose = %s
+                      AND m.used_at IS NULL
+                      AND m.expires_at > NOW()
+                    """,
+                    (token_hash, purpose),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                magic_token_id = row.pop("magic_token_id", None)
+                user = _row_to_user(row)
+                if not user.is_active:
+                    return None
+                if magic_token_id is not None:
+                    cur.execute(
+                        """
+                        UPDATE magic_login_tokens
+                        SET used_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (magic_token_id,),
+                    )
+                cur.execute(
+                    """
+                    UPDATE users
+                    SET last_login_at = NOW(),
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (user.id,),
+                )
+                return get_user_by_id(user.id) or user
+    finally:
+        conn.close()
+
+
 def change_user_password(user_id: int, current_password: str, new_password: str) -> bool:
     user = get_user_by_id(user_id)
     if not user or not user.is_active or not verify_password(current_password, user.password_hash):
@@ -1055,7 +1394,7 @@ def get_admin_user_detail(user_id: int) -> Optional[dict[str, Any]]:
             payload = dict(row)
             cur.execute(
                 """
-                SELECT id, summary, intent_type, status, created_at
+                SELECT id, public_id, summary, intent_type, status, created_at
                 FROM demands
                 WHERE user_id = %s
                 ORDER BY created_at DESC
@@ -1212,69 +1551,68 @@ def save_demand(
         conn.close()
 
 
-def create_web_demand(
+def save_telegram_demand_lightweight(
+    telegram_user_id: int,
     user_id: int,
-    summary: str,
-    description: str,
-    location: str = "",
-    budget_min: Optional[float] = None,
-    budget_max: Optional[float] = None,
-    urgency: str = "",
-    intent_type: str = "general_request",
+    demand: DemandResult,
+    state: SessionState,
 ) -> PublicDemand:
-    """Crea una demanda manual desde la web."""
-    attributes = {"description": description.strip()}
-    normalized_payload = normalize_existing_demand_record(
-        {
-            "summary": summary.strip(),
-            "intent_type": intent_type,
-            "intent_domain": None,
-            "location": location.strip() or None,
-            "budget_min": budget_min,
-            "budget_max": budget_max,
-            "urgency": urgency.strip() or None,
-            "attributes": attributes,
-            "normalized_payload": {},
-            "original_text": description.strip(),
-        },
-        _schema_registry(),
-    )
+    """Guarda una demanda creada desde Telegram usando el flujo ligero actual."""
+    attributes = {
+        **(demand.attributes or {}),
+        "description": state.original_text,
+    }
     conn = _get_connection()
+    zone = _demand_zone_fields(demand)
+    try:
+        llm_metadata = _enrich_search_metadata(
+            raw_text=state.original_text,
+            summary=demand.summary,
+            location_label=demand.location_value or demand.location or zone.get("location_label") or "",
+            budget_max=demand.budget_max,
+            budget_unit=demand.budget_unit,
+            llm_metadata=demand.llm_metadata or {},
+        )
+    except Exception as exc:
+        logger.warning("No he podido enriquecer metadatos de búsqueda para Telegram: %s", exc)
+        llm_metadata = dict(demand.llm_metadata or {})
     try:
         with conn:
             with conn.cursor() as cur:
-                zone = zone_to_storage_fields(normalized_payload.get("location_json"))
                 cur.execute(
                     """
                     INSERT INTO demands (
-                        user_id, telegram_user_id, intent_domain, intent_type, summary, location,
-                        budget_min, budget_max, urgency, location_mode, location_label, location_lat, location_lon,
+                        public_id, telegram_user_id, user_id, intent_domain, intent_type, summary, location,
+                        budget_min, budget_max, budget_unit, urgency, location_mode, location_label, location_lat, location_lon,
                         location_radius_km, location_radius_bucket, location_source, location_raw_query,
                         location_admin_level, location_bbox, location_geojson, location_json,
-                        attributes, normalized_payload, schema_version, original_text,
+                        attributes, normalized_payload, llm_metadata, schema_version, original_text,
                         conversation, status, expires_at, created_via
                     )
                     VALUES (
-                        %s, NULL, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s,
-                        '[]', 'open', NOW() + interval '48 hours', 'web'
+                        %s, %s, %s, %s, %s, %s,
+                        '[]', 'open', NOW() + interval '48 hours', 'telegram'
                     )
-                    RETURNING id, user_id, intent_domain, summary, intent_type, location, location_mode, location_admin_level,
+                    RETURNING id, public_id, user_id, intent_domain, summary, intent_type, location, location_mode, location_admin_level,
                               location_label, location_lat, location_lon, location_radius_km, location_radius_bucket,
                               location_source, location_raw_query, location_bbox, location_geojson, location_json,
-                              budget_min, budget_max, urgency, status, is_pinned, expires_at, created_at, attributes, normalized_payload
+                              budget_min, budget_max, budget_unit, urgency, status, is_pinned, expires_at, created_at, attributes, normalized_payload, llm_metadata, original_text
                     """,
                     (
+                        _next_demand_public_id(cur),
+                        telegram_user_id,
                         user_id,
-                        normalized_payload.get("intent_domain", ""),
-                        normalized_payload.get("intent_type", intent_type),
-                        normalized_payload.get("summary", summary.strip()),
-                        normalized_payload.get("location_value", location.strip() or None),
-                        normalized_payload.get("budget_min", budget_min),
-                        normalized_payload.get("budget_max", budget_max),
-                        normalized_payload.get("urgency", urgency.strip() or None),
+                        "",
+                        "free_text",
+                        demand.summary,
+                        demand.location_value or demand.location,
+                        None,
+                        demand.budget_max,
+                        demand.budget_unit,
+                        None,
                         zone["location_mode"],
                         zone["location_label"],
                         zone["location_lat"],
@@ -1288,8 +1626,101 @@ def create_web_demand(
                         json.dumps(zone["location_geojson"], ensure_ascii=False),
                         json.dumps(zone["location_json"], ensure_ascii=False),
                         json.dumps(attributes, ensure_ascii=False),
-                        json.dumps(normalized_payload, ensure_ascii=False),
-                        _schema_registry().version,
+                        json.dumps({}, ensure_ascii=False),
+                        json.dumps(llm_metadata, ensure_ascii=False),
+                        "",
+                        state.original_text,
+                    ),
+                )
+                row = dict(cur.fetchone())
+                _apply_zone_geometries(cur, "demands", row["id"], zone)
+                row = _hydrate_demand_row(row)
+                row["offer_count"] = 0
+                return PublicDemand.model_validate(row)
+    finally:
+        conn.close()
+
+
+def create_web_demand(
+    user_id: int,
+    summary: str,
+    description: str,
+    location: str = "",
+    budget_max: Optional[float] = None,
+    budget_unit: str = "total",
+    zone_filter: Optional[dict[str, Any]] = None,
+    suggested_missing_details: Optional[list[str]] = None,
+    include_embeddings: bool = True,
+) -> PublicDemand:
+    """Crea una demanda simple desde la web."""
+    description = str(description or "").strip()
+    if len(description) > DEMAND_TEXT_MAX_LENGTH:
+        raise ValueError(f"La demanda no puede superar {DEMAND_TEXT_MAX_LENGTH} caracteres.")
+    attributes = {"description": description.strip()}
+    zone = zone_to_storage_fields(zone_filter)
+    llm_metadata = {"suggested_missing_details": list(suggested_missing_details or [])}
+    if include_embeddings:
+        llm_metadata = _enrich_search_metadata(
+            raw_text=description.strip(),
+            summary=summary.strip(),
+            location_label=location.strip() or zone["location_label"] or "",
+            budget_max=budget_max,
+            budget_unit=budget_unit,
+            llm_metadata=llm_metadata,
+        )
+    conn = _get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO demands (
+                        public_id, user_id, telegram_user_id, intent_domain, intent_type, summary, location,
+                        budget_min, budget_max, budget_unit, urgency, location_mode, location_label, location_lat, location_lon,
+                        location_radius_km, location_radius_bucket, location_source, location_raw_query,
+                        location_admin_level, location_bbox, location_geojson, location_json,
+                        attributes, normalized_payload, llm_metadata, schema_version, original_text,
+                        conversation, status, expires_at, created_via
+                    )
+                    VALUES (
+                        %s, %s, NULL, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s,
+                        '[]', 'open', NOW() + interval '48 hours', 'web'
+                    )
+                    RETURNING id, public_id, user_id, intent_domain, summary, intent_type, location, location_mode, location_admin_level,
+                              location_label, location_lat, location_lon, location_radius_km, location_radius_bucket,
+                              location_source, location_raw_query, location_bbox, location_geojson, location_json,
+                              budget_min, budget_max, budget_unit, urgency, status, is_pinned, expires_at, created_at, attributes, normalized_payload, llm_metadata, original_text
+                    """,
+                    (
+                        _next_demand_public_id(cur),
+                        user_id,
+                        "",
+                        "free_text",
+                        summary.strip(),
+                        location.strip() or zone["location_label"] or None,
+                        None,
+                        budget_max,
+                        budget_unit.strip() or "total",
+                        None,
+                        zone["location_mode"],
+                        zone["location_label"],
+                        zone["location_lat"],
+                        zone["location_lon"],
+                        zone["location_radius_km"],
+                        zone["location_radius_bucket"],
+                        zone["location_source"],
+                        zone["location_raw_query"],
+                        zone["location_admin_level"],
+                        json.dumps(zone["location_bbox"], ensure_ascii=False),
+                        json.dumps(zone["location_geojson"], ensure_ascii=False),
+                        json.dumps(zone["location_json"], ensure_ascii=False),
+                        json.dumps(attributes, ensure_ascii=False),
+                        json.dumps({}, ensure_ascii=False),
+                        json.dumps(llm_metadata, ensure_ascii=False),
+                        "",
                         description.strip(),
                     ),
                 )
@@ -1307,52 +1738,57 @@ def save_web_demand_from_agent(
     demand: DemandResult,
     state: SessionState,
 ) -> PublicDemand:
-    """Guarda una demanda web creada a partir del agente conversacional."""
+    """Guarda una demanda web creada a partir del analizador ligero."""
     attributes = {
         **demand.attributes,
         "description": state.original_text,
     }
-    conversation = [
-        {"question": q, "answer": a}
-        for q, a in zip(state.questions_asked, state.user_answers)
-    ]
-
     conn = _get_connection()
     zone = _demand_zone_fields(demand)
+    llm_metadata = _enrich_search_metadata(
+        raw_text=state.original_text,
+        summary=demand.summary,
+        location_label=demand.location_value or demand.location or zone.get("location_label") or "",
+        budget_max=demand.budget_max,
+        budget_unit=demand.budget_unit,
+        llm_metadata=demand.llm_metadata or {},
+    )
     try:
         with conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     INSERT INTO demands (
-                        user_id, telegram_user_id, intent_domain, intent_type, summary, location,
-                        budget_min, budget_max, urgency, location_mode, location_label, location_lat, location_lon,
+                        public_id, user_id, telegram_user_id, intent_domain, intent_type, summary, location,
+                        budget_min, budget_max, budget_unit, urgency, location_mode, location_label, location_lat, location_lon,
                         location_radius_km, location_radius_bucket, location_source, location_raw_query,
                         location_admin_level, location_bbox, location_geojson, location_json,
-                        attributes, normalized_payload, schema_version, original_text,
+                        attributes, normalized_payload, llm_metadata, schema_version, original_text,
                         conversation, status, expires_at, created_via
                     )
                     VALUES (
-                        %s, NULL, %s, %s, %s, %s,
+                        %s, %s, NULL, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s,
                         %s, 'open', NOW() + interval '48 hours', 'web'
                     )
-                    RETURNING id, user_id, intent_domain, summary, intent_type, location, location_mode, location_admin_level,
+                    RETURNING id, public_id, user_id, intent_domain, summary, intent_type, location, location_mode, location_admin_level,
                               location_label, location_lat, location_lon, location_radius_km, location_radius_bucket,
                               location_source, location_raw_query, location_bbox, location_geojson, location_json,
-                              budget_min, budget_max, urgency, status, is_pinned, expires_at, created_at, attributes, normalized_payload
+                              budget_min, budget_max, budget_unit, urgency, status, is_pinned, expires_at, created_at, attributes, normalized_payload, llm_metadata, original_text
                     """,
                     (
+                        _next_demand_public_id(cur),
                         user_id,
-                        demand.intent_domain,
-                        demand.intent_type,
+                        "",
+                        "free_text",
                         demand.summary,
                         demand.location_value or demand.location,
-                        demand.budget_min,
+                        None,
                         demand.budget_max,
-                        demand.urgency,
+                        demand.budget_unit,
+                        None,
                         zone["location_mode"],
                         zone["location_label"],
                         zone["location_lat"],
@@ -1366,10 +1802,11 @@ def save_web_demand_from_agent(
                         json.dumps(zone["location_geojson"], ensure_ascii=False),
                         json.dumps(zone["location_json"], ensure_ascii=False),
                         json.dumps(attributes, ensure_ascii=False),
-                        json.dumps(demand.model_dump(mode="json"), ensure_ascii=False),
-                        demand.schema_version or _schema_registry().version,
+                        json.dumps({}, ensure_ascii=False),
+                        json.dumps(llm_metadata, ensure_ascii=False),
+                        "",
                         state.original_text,
-                        json.dumps(conversation, ensure_ascii=False),
+                        "[]",
                     ),
                 )
                 row = dict(cur.fetchone())
@@ -1381,21 +1818,23 @@ def save_web_demand_from_agent(
         conn.close()
 
 
-def get_demands_by_user(telegram_user_id: int) -> list[dict[str, Any]]:
-    """Obtiene demandas creadas por un usuario de Telegram."""
+def get_demands_by_user(user_id: int, telegram_user_id: int | None = None) -> list[dict[str, Any]]:
+    """Obtiene demandas creadas por un usuario autenticado, incluyendo su origen Telegram."""
     conn = _get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, intent_domain, intent_type, summary, location, budget_min, budget_max,
-                       urgency, attributes, normalized_payload, original_text, created_at
+                SELECT id, intent_domain, intent_type, summary, location, location_label, location_lat, location_lon,
+                       public_id,
+                       location_radius_km, location_json, budget_min, budget_max, budget_unit, urgency,
+                       status, expires_at, attributes, normalized_payload, llm_metadata, original_text, created_at
                 FROM demands
-                WHERE telegram_user_id = %s
+                WHERE user_id = %s OR (%s IS NOT NULL AND telegram_user_id = %s)
                 ORDER BY created_at DESC
                 LIMIT 10
                 """,
-                (telegram_user_id,),
+                (user_id, telegram_user_id, telegram_user_id),
             )
             rows = cur.fetchall()
             return [_hydrate_demand_row(dict(r)) for r in rows]
@@ -1406,11 +1845,8 @@ def get_demands_by_user(telegram_user_id: int) -> list[dict[str, Any]]:
 def get_public_demands(
     query_text: str = "",
     location: str = "",
-    intent_type: str = "",
     viewer_user_id: Optional[int] = None,
     zone_filter: Optional[dict[str, Any]] = None,
-    intent_domains: Optional[list[str]] = None,
-    intent_types: Optional[list[str]] = None,
 ) -> list[PublicDemand]:
     """Lista demandas activas y públicas con filtros simples."""
     conn = _get_connection()
@@ -1420,22 +1856,13 @@ def get_public_demands(
             where_parts = [
                 "d.status = 'open'",
                 "(d.expires_at IS NULL OR d.expires_at > NOW())",
-                "(%s = '' OR d.summary ILIKE %s OR d.original_text ILIKE %s OR CAST(d.attributes AS TEXT) ILIKE %s OR CAST(d.conversation AS TEXT) ILIKE %s)",
                 "(%s = '' OR COALESCE(d.location_label, d.location, '') ILIKE %s)",
-                "(%s = '' OR d.intent_type ILIKE %s)",
             ]
             params: list[Any] = [
                 viewer_user_id or -1,
                 viewer_user_id or -1,
-                query_text,
-                f"%{query_text}%",
-                f"%{query_text}%",
-                f"%{query_text}%",
-                f"%{query_text}%",
                 location,
                 f"%{location}%",
-                intent_type,
-                f"%{intent_type}%",
             ]
 
             if zone_filter and _postgis_available():
@@ -1447,10 +1874,10 @@ def get_public_demands(
                     params.extend(search_params)
 
             query = f"""
-                SELECT d.id, d.user_id, d.intent_domain, d.summary, d.intent_type, d.location, d.location_label, d.location_lat,
+                SELECT d.id, d.public_id, d.user_id, d.intent_domain, d.summary, d.intent_type, d.original_text, d.location, d.location_label, d.location_lat,
                        d.location_lon, d.location_radius_km, d.location_radius_bucket, d.location_source, d.location_raw_query,
-                       d.location_mode, d.location_admin_level, d.location_bbox, d.location_geojson, d.location_json, d.budget_min, d.budget_max,
-                       d.urgency, d.status, d.is_pinned, d.expires_at, d.created_at, d.attributes, d.normalized_payload,
+                       d.location_mode, d.location_admin_level, d.location_bbox, d.location_geojson, d.location_json, d.budget_min, d.budget_max, d.budget_unit,
+                       d.urgency, d.status, d.is_pinned, d.expires_at, d.created_at, d.attributes, d.normalized_payload, d.llm_metadata,
                        COALESCE(u.full_name, 'Demandante') AS owner_name,
                        COUNT(o.id)::INTEGER AS offer_count,
                        BOOL_OR(CASE WHEN o.supplier_user_id = %s THEN TRUE ELSE FALSE END) AS viewer_has_offer,
@@ -1464,10 +1891,50 @@ def get_public_demands(
                 """
             cur.execute(query, params)
             rows = [_hydrate_demand_row(dict(row)) for row in cur.fetchall()]
+            if query_text.strip():
+                query_embedding = embed_query_text(query_text)
+                ranked_rows: list[dict[str, Any]] = []
+                for row in rows:
+                    score = _semantic_match_score(row, query_embedding)
+                    if score >= 0.12:
+                        row["_match_score"] = score
+                        ranked_rows.append(row)
+                ranked_rows = sorted(
+                    ranked_rows,
+                    key=lambda item: (
+                        float(item.get("_match_score", 0.0)),
+                        item.get("created_at") or datetime.min,
+                    ),
+                    reverse=True,
+                )
+                rerank_input = [
+                    {
+                        "id": row["id"],
+                        "summary": row.get("summary"),
+                        "text": row.get("original_text") or row.get("summary"),
+                    }
+                    for row in ranked_rows[:25]
+                ]
+                rerank_scores = rerank_demand_candidates(query_text, rerank_input)
+                if rerank_scores:
+                    filtered_rows: list[dict[str, Any]] = []
+                    for row in ranked_rows:
+                        rerank_score = float(rerank_scores.get(row["id"], 0.0))
+                        row["_rerank_score"] = rerank_score
+                        if rerank_score >= 0.22:
+                            filtered_rows.append(row)
+                    ranked_rows = sorted(
+                        filtered_rows,
+                        key=lambda item: (
+                            float(item.get("_rerank_score", 0.0)),
+                            float(item.get("_match_score", 0.0)),
+                            item.get("created_at") or datetime.min,
+                        ),
+                        reverse=True,
+                    )
+                rows = ranked_rows
             if zone_filter:
                 rows = [row for row in rows if _matches_zone_filter(row, zone_filter)]
-            if intent_types or intent_domains:
-                rows = [row for row in rows if _matches_category_filter(row, intent_domains, intent_types)]
             return [PublicDemand.model_validate(row) for row in rows]
     finally:
         conn.close()
@@ -1481,10 +1948,10 @@ def list_admin_demands(limit: int = 200) -> list[dict[str, Any]]:
             _expire_open_demands(cur)
             cur.execute(
                 """
-                SELECT d.id, d.user_id, d.intent_domain, d.summary, d.intent_type, d.location, d.location_label, d.location_lat,
+                SELECT d.id, d.public_id, d.user_id, d.intent_domain, d.summary, d.intent_type, d.original_text, d.location, d.location_label, d.location_lat,
                        d.location_lon, d.location_radius_km, d.location_radius_bucket, d.location_source, d.location_raw_query,
-                       d.location_json, d.budget_min, d.budget_max,
-                       d.urgency, d.status, d.is_pinned, d.expires_at, d.created_at, d.attributes, d.normalized_payload, d.original_text,
+                       d.location_json, d.budget_min, d.budget_max, d.budget_unit,
+                       d.urgency, d.status, d.is_pinned, d.expires_at, d.created_at, d.attributes, d.normalized_payload, d.llm_metadata,
                        COALESCE(u.full_name, 'Demandante') AS owner_name,
                        COUNT(o.id)::INTEGER AS offer_count
                 FROM demands d
@@ -1501,24 +1968,78 @@ def list_admin_demands(limit: int = 200) -> list[dict[str, Any]]:
         conn.close()
 
 
-def get_demand_detail(demand_id: int, viewer_user_id: Optional[int] = None) -> Optional[dict[str, Any]]:
-    """Obtiene una demanda y metadatos para la vista de detalle."""
+def reindex_demand_embeddings(limit: int | None = None) -> int:
+    """Regenera search_text y embeddings de las demandas existentes."""
+    conn = _get_connection()
+    updated = 0
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                _expire_open_demands(cur)
+                sql = """
+                    SELECT id, summary, original_text, location, location_label, budget_max, budget_unit, llm_metadata
+                    FROM demands
+                    WHERE status <> 'deleted'
+                    ORDER BY created_at DESC
+                """
+                params: list[Any] = []
+                if limit is not None:
+                    sql += " LIMIT %s"
+                    params.append(limit)
+                cur.execute(sql, params)
+                rows = cur.fetchall()
+                for row in rows:
+                    llm_metadata = _enrich_search_metadata(
+                        raw_text=str(row.get("original_text") or row.get("summary") or "").strip(),
+                        summary=str(row.get("summary") or "").strip(),
+                        location_label=str(row.get("location_label") or row.get("location") or "").strip(),
+                        budget_max=row.get("budget_max"),
+                        budget_unit=str(row.get("budget_unit") or "total"),
+                        llm_metadata=dict(row.get("llm_metadata") or {}),
+                    )
+                    cur.execute(
+                        """
+                        UPDATE demands
+                        SET llm_metadata = %s
+                        WHERE id = %s
+                        """,
+                        (json.dumps(llm_metadata, ensure_ascii=False), row["id"]),
+                    )
+                    updated += 1
+        return updated
+    finally:
+        conn.close()
+
+
+def get_demand_id_by_public_id(public_id: str) -> Optional[int]:
+    conn = _get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM demands WHERE public_id = %s", (str(public_id or "").strip(),))
+            row = cur.fetchone()
+            return int(row["id"]) if row else None
+    finally:
+        conn.close()
+
+
+def get_demand_detail(demand_id: str, viewer_user_id: Optional[int] = None) -> Optional[dict[str, Any]]:
+    """Obtiene una demanda y metadatos para la vista de detalle a partir de su public_id."""
     conn = _get_connection()
     try:
         with conn.cursor() as cur:
             _expire_open_demands(cur)
             cur.execute(
                 """
-                SELECT d.id, d.intent_domain, d.summary, d.intent_type, d.location, d.location_label, d.location_lat,
+                SELECT d.id, d.public_id, d.intent_domain, d.summary, d.intent_type, d.original_text, d.location, d.location_label, d.location_lat,
                        d.location_lon, d.location_radius_km, d.location_radius_bucket, d.location_source, d.location_raw_query,
-                       d.location_json, d.budget_min, d.budget_max,
-                       d.urgency, d.status, d.is_pinned, d.expires_at, d.created_at, d.attributes, d.normalized_payload, d.user_id,
+                       d.location_json, d.budget_min, d.budget_max, d.budget_unit,
+                       d.urgency, d.status, d.is_pinned, d.expires_at, d.created_at, d.attributes, d.normalized_payload, d.llm_metadata, d.user_id,
                        COALESCE(u.full_name, 'Demandante') AS owner_name,
                        COUNT(o.id)::INTEGER AS offer_count
                 FROM demands d
                 LEFT JOIN users u ON u.id = d.user_id
                 LEFT JOIN offers o ON o.demand_id = d.id
-                WHERE d.id = %s
+                WHERE d.public_id = %s
                 GROUP BY d.id, u.full_name
                 """,
                 (demand_id,),
@@ -1539,7 +2060,7 @@ def get_demand_detail(demand_id: int, viewer_user_id: Optional[int] = None) -> O
                     FROM offers
                     WHERE demand_id = %s AND supplier_user_id = %s
                     """,
-                    (demand_id, viewer_user_id),
+                    (data["id"], viewer_user_id),
                 )
                 offer_row = cur.fetchone()
                 data["viewer_has_offer"] = offer_row is not None
@@ -1561,10 +2082,10 @@ def get_editable_demand(demand_id: int, user_id: int) -> Optional[dict[str, Any]
             _expire_open_demands(cur)
             cur.execute(
                 """
-                SELECT d.id, d.user_id, d.intent_domain, d.summary, d.intent_type, d.location, d.location_label, d.location_lat,
+                SELECT d.id, d.public_id, d.user_id, d.intent_domain, d.summary, d.intent_type, d.original_text, d.location, d.location_label, d.location_lat,
                        d.location_lon, d.location_radius_km, d.location_radius_bucket, d.location_source, d.location_raw_query,
-                       d.location_json, d.budget_min, d.budget_max,
-                       d.urgency, d.status, d.is_pinned, d.expires_at, d.created_at, d.attributes, d.normalized_payload, d.original_text,
+                       d.location_json, d.budget_min, d.budget_max, d.budget_unit,
+                       d.urgency, d.status, d.is_pinned, d.expires_at, d.created_at, d.attributes, d.normalized_payload, d.llm_metadata,
                        COALESCE(u.full_name, 'Demandante') AS owner_name
                 FROM demands d
                 LEFT JOIN users u ON u.id = d.user_id
@@ -1585,18 +2106,22 @@ def update_web_demand_from_agent(
     demand: DemandResult,
     state: SessionState,
 ) -> Optional[PublicDemand]:
-    """Actualiza una demanda web abierta reutilizando la misma normalización."""
+    """Actualiza una demanda web abierta usando el modelo ligero."""
     attributes = {
         **demand.attributes,
         "description": state.original_text,
     }
-    conversation = [
-        {"question": q, "answer": a}
-        for q, a in zip(state.questions_asked, state.user_answers)
-    ]
 
     conn = _get_connection()
     zone = _demand_zone_fields(demand)
+    llm_metadata = _enrich_search_metadata(
+        raw_text=state.original_text,
+        summary=demand.summary,
+        location_label=demand.location_value or demand.location or zone.get("location_label") or "",
+        budget_max=demand.budget_max,
+        budget_unit=demand.budget_unit,
+        llm_metadata=demand.llm_metadata or {},
+    )
     try:
         with conn:
             with conn.cursor() as cur:
@@ -1609,6 +2134,7 @@ def update_web_demand_from_agent(
                         location = %s,
                         budget_min = %s,
                         budget_max = %s,
+                        budget_unit = %s,
                         urgency = %s,
                         location_mode = %s,
                         location_label = %s,
@@ -1624,6 +2150,7 @@ def update_web_demand_from_agent(
                         location_json = %s,
                         attributes = %s,
                         normalized_payload = %s,
+                        llm_metadata = %s,
                         schema_version = %s,
                         original_text = %s,
                         conversation = %s
@@ -1631,19 +2158,20 @@ def update_web_demand_from_agent(
                       AND user_id = %s
                       AND status = 'open'
                       AND (expires_at IS NULL OR expires_at > NOW())
-                    RETURNING id, user_id, intent_domain, summary, intent_type, location, location_mode, location_admin_level,
+                    RETURNING id, public_id, user_id, intent_domain, summary, intent_type, location, location_mode, location_admin_level,
                               location_label, location_lat, location_lon, location_radius_km, location_radius_bucket,
                               location_source, location_raw_query, location_bbox, location_geojson, location_json,
-                              budget_min, budget_max, urgency, status, expires_at, created_at, attributes, normalized_payload
+                              budget_min, budget_max, budget_unit, urgency, status, expires_at, created_at, attributes, normalized_payload, llm_metadata, original_text
                     """,
                     (
-                        demand.intent_domain,
-                        demand.intent_type,
+                        "",
+                        "free_text",
                         demand.summary,
                         demand.location_value or demand.location,
-                        demand.budget_min,
+                        None,
                         demand.budget_max,
-                        demand.urgency,
+                        demand.budget_unit,
+                        None,
                         zone["location_mode"],
                         zone["location_label"],
                         zone["location_lat"],
@@ -1657,10 +2185,11 @@ def update_web_demand_from_agent(
                         json.dumps(zone["location_geojson"], ensure_ascii=False),
                         json.dumps(zone["location_json"], ensure_ascii=False),
                         json.dumps(attributes, ensure_ascii=False),
-                        json.dumps(demand.model_dump(mode="json"), ensure_ascii=False),
-                        demand.schema_version or _schema_registry().version,
+                        json.dumps({}, ensure_ascii=False),
+                        json.dumps(llm_metadata, ensure_ascii=False),
+                        "",
                         state.original_text,
-                        json.dumps(conversation, ensure_ascii=False),
+                        "[]",
                         demand_id,
                         user_id,
                     ),
@@ -2052,8 +2581,8 @@ def get_offers_for_owner(demand_id: int, owner_user_id: int) -> list[OfferResult
 def _fetch_owned_demands_with_conversations(cur, user_id: int) -> list[dict[str, Any]]:
     cur.execute(
         """
-        SELECT d.id, d.intent_domain, d.summary, d.intent_type, d.location, d.budget_min, d.budget_max,
-               d.urgency, d.status, d.is_pinned, d.expires_at, d.created_at, d.attributes, d.normalized_payload,
+        SELECT d.id, d.public_id, d.intent_domain, d.summary, d.intent_type, d.original_text, d.location, d.budget_min, d.budget_max, d.budget_unit,
+               d.urgency, d.status, d.is_pinned, d.expires_at, d.created_at, d.attributes, d.normalized_payload, d.llm_metadata,
                (d.status = 'open' AND (d.expires_at IS NULL OR d.expires_at > NOW())) AS is_active,
                COUNT(o.id)::INTEGER AS offer_count,
                BOOL_OR(COALESCE(om.has_unread, FALSE)) AS has_unread
@@ -2125,10 +2654,10 @@ def _fetch_demand_conversations(cur, demand_id: int, owner_user_id: int) -> list
 def _fetch_supplier_offer_threads(cur, user_id: int) -> list[dict[str, Any]]:
     cur.execute(
         """
-        SELECT o.id AS offer_id, o.demand_id, o.message, o.created_at, o.updated_at,
+        SELECT o.id AS offer_id, o.demand_id, d.public_id AS demand_public_id, o.message, o.created_at, o.updated_at,
                o.supplier_is_pinned, o.supplier_hidden,
-               d.summary AS demand_summary, d.intent_domain, d.intent_type, d.location, d.budget_min, d.budget_max,
-               d.urgency, d.attributes, d.normalized_payload,
+               d.summary AS demand_summary, d.intent_domain, d.intent_type, d.original_text, d.location, d.budget_min, d.budget_max, d.budget_unit,
+               d.urgency, d.attributes, d.normalized_payload, d.llm_metadata,
                COALESCE(owner_user.full_name, 'Demandante') AS owner_name,
                d.status, d.is_pinned, d.expires_at AS demand_expires_at,
                (d.status = 'open' AND (d.expires_at IS NULL OR d.expires_at > NOW())) AS is_active,
@@ -2165,19 +2694,17 @@ def _fetch_supplier_offer_threads(cur, user_id: int) -> list[dict[str, Any]]:
     )
     rows = [dict(row) for row in cur.fetchall()]
     for row in rows:
-        row["normalized_payload"] = _normalized_payload_for_row(
+        row["normalized_payload"] = _lightweight_payload_for_row(
             {
                 "id": row.get("demand_id"),
                 "summary": row.get("demand_summary"),
-                "intent_domain": row.get("intent_domain"),
-                "intent_type": row.get("intent_type"),
+                "original_text": row.get("original_text"),
                 "location": row.get("location"),
-                "budget_min": row.get("budget_min"),
                 "budget_max": row.get("budget_max"),
-                "urgency": row.get("urgency"),
+                "budget_unit": row.get("budget_unit"),
                 "attributes": row.get("attributes") or {},
                 "normalized_payload": row.get("normalized_payload") or {},
-                "original_text": (row.get("attributes") or {}).get("description", row.get("demand_summary")),
+                "llm_metadata": row.get("llm_metadata") or {},
             }
         )
         row["messages"] = _fetch_offer_messages(cur, row["offer_id"])
@@ -2253,6 +2780,9 @@ def _fetch_offer_messages(cur, offer_id: int) -> list[dict[str, Any]]:
 
 def create_offer(demand_id: int, supplier_user_id: int, message: str) -> OfferResult:
     """Crea o actualiza la oferta inicial de un ofertante para una demanda."""
+    message = str(message or "").strip()
+    if len(message) > MESSAGE_TEXT_MAX_LENGTH:
+        raise ValueError(f"El mensaje no puede superar {MESSAGE_TEXT_MAX_LENGTH} caracteres.")
     conn = _get_connection()
     try:
         with conn:
@@ -2291,7 +2821,7 @@ def create_offer(demand_id: int, supplier_user_id: int, message: str) -> OfferRe
                         created_at = NOW()
                     RETURNING id, demand_id, supplier_user_id, message, created_at
                     """,
-                    (demand_id, supplier_user_id, message.strip()),
+                    (demand_id, supplier_user_id, message),
                 )
                 row = dict(cur.fetchone())
 
@@ -2312,7 +2842,7 @@ def create_offer(demand_id: int, supplier_user_id: int, message: str) -> OfferRe
                     INSERT INTO offer_messages (offer_id, sender_user_id, body)
                     VALUES (%s, %s, %s)
                     """,
-                    (offer.id, supplier_user_id, message.strip()),
+                    (offer.id, supplier_user_id, message),
                 )
                 return offer
     finally:
@@ -2333,9 +2863,9 @@ def get_offer_thread(
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT o.id, o.demand_id, o.supplier_user_id, o.message, o.created_at,
+                    SELECT o.id, o.demand_id, d.public_id AS demand_public_id, o.supplier_user_id, o.message, o.created_at,
                            d.user_id AS demand_owner_user_id, d.summary AS demand_summary, d.intent_domain, d.intent_type,
-                           d.location, d.budget_min, d.budget_max, d.urgency, d.attributes, d.normalized_payload,
+                           d.original_text, d.location, d.budget_min, d.budget_max, d.budget_unit, d.urgency, d.attributes, d.normalized_payload, d.llm_metadata,
                            d.status AS demand_status, d.expires_at AS demand_expires_at,
                            su.full_name AS supplier_name, su.email AS supplier_email,
                            du.full_name AS demand_owner_name
@@ -2359,19 +2889,17 @@ def get_offer_thread(
                     return None
 
                 data = dict(row)
-                data["normalized_payload"] = _normalized_payload_for_row(
+                data["normalized_payload"] = _lightweight_payload_for_row(
                     {
                         "id": data.get("demand_id"),
                         "summary": data.get("demand_summary"),
-                        "intent_domain": data.get("intent_domain"),
-                        "intent_type": data.get("intent_type"),
+                        "original_text": data.get("original_text"),
                         "location": data.get("location"),
-                        "budget_min": data.get("budget_min"),
                         "budget_max": data.get("budget_max"),
-                        "urgency": data.get("urgency"),
+                        "budget_unit": data.get("budget_unit"),
                         "attributes": data.get("attributes") or {},
                         "normalized_payload": data.get("normalized_payload") or {},
-                        "original_text": (data.get("attributes") or {}).get("description", data.get("demand_summary")),
+                        "llm_metadata": data.get("llm_metadata") or {},
                     }
                 )
                 data["effective_status"] = str(data.get("demand_status") or "open").lower()
@@ -2399,6 +2927,9 @@ def get_offer_thread(
 
 def create_offer_message(offer_id: int, sender_user_id: int, body: str) -> bool:
     """Añade un mensaje al hilo de una oferta si el usuario participa en ella."""
+    body = str(body or "").strip()
+    if len(body) > MESSAGE_TEXT_MAX_LENGTH:
+        return False
     conn = _get_connection()
     try:
         with conn:
@@ -2429,7 +2960,7 @@ def create_offer_message(offer_id: int, sender_user_id: int, body: str) -> bool:
                     INSERT INTO offer_messages (offer_id, sender_user_id, body)
                     VALUES (%s, %s, %s)
                     """,
-                    (offer_id, sender_user_id, body.strip()),
+                    (offer_id, sender_user_id, body),
                 )
                 if sender_user_id == row["demand_owner_user_id"]:
                     cur.execute(

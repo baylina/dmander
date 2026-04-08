@@ -19,7 +19,7 @@
       <div class="chat-scroll" id="offers-chat-messages"></div>
       <form id="offers-chat-form" class="chat-compose compact-compose">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <textarea name="body" rows="2" placeholder="Responder..." required></textarea>
+        <textarea name="body" rows="2" maxlength="200" placeholder="Responder..." required></textarea>
         <button type="submit" class="button button-primary compact-send">Enviar</button>
       </form>
     </div>
@@ -111,14 +111,6 @@
       if (!button) return;
       const offerId = Number(button.dataset.offerId);
       selectedOfferId = selectedOfferId === offerId ? null : offerId;
-      if (selectedOfferId) {
-        const response = await fetch(`/api/offers/${selectedOfferId}/thread`, { headers: { Accept: 'application/json' }});
-        if (response.ok) {
-          const thread = await response.json();
-          const idx = workspace.my_offers_active.findIndex((o) => o.offer_id === selectedOfferId);
-          if (idx >= 0) workspace.my_offers_active[idx] = { ...workspace.my_offers_active[idx], ...thread, unread_count: 0 };
-        }
-      }
       renderList();
       renderThread();
     });
@@ -142,7 +134,6 @@
     });
 
     fetchWorkspace();
-    window.setInterval(fetchWorkspace, 8000);
   })();
 </script>
 {% endblock %}

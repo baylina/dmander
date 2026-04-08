@@ -5,15 +5,15 @@
   <section class="hero-home">
     <div class="hero-home-copy card">
       <p class="eyebrow">Marketplace de intención</p>
-      <h1>Encuentra quien te ayude o encuentra clientes listos para hablar.</h1>
-      <p class="hero-text">Publica lo que necesitas en un minuto o responde a demandas reales filtrando por categoría, zona y presupuesto.</p>
+      <h1>Publica lo que necesitas con texto libre y deja que el sistema te ayude a afinarlo.</h1>
+      <p class="hero-text">Sin categorías rígidas. Describe tu necesidad en lenguaje natural, revisa ubicación y precio máximo si aplica, y empieza a recibir respuestas.</p>
       <div class="hero-actions">
         <a href="/demands/new?fresh=1" class="button button-primary">Quiero publicar una demanda</a>
         <a href="#explorar-demandas" class="button button-ghost">Quiero ver demandas</a>
       </div>
       <div class="hero-mini-points">
-        <span>Sin formularios largos al empezar</span>
-        <span>Contacto directo entre demandante y ofertante</span>
+        <span>Texto libre desde el primer momento</span>
+        <span>Ubicación y precio como atributos opcionales</span>
       </div>
     </div>
 
@@ -21,7 +21,7 @@
       <p class="detail-label">Empieza gratis</p>
       <form action="/demands" method="post" class="form-stack js-busy-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <textarea name="demand_text" rows="6" placeholder="Ej.: Busco clases particulares de clarinete en Barcelona..." required></textarea>
+        <textarea name="demand_text" rows="6" maxlength="200" placeholder="Ej.: Quiero clases particulares de física para 2º de bachillerato en Sabadell..." required></textarea>
         <button type="submit" class="button button-primary" data-busy-text="Analizando tu demanda...">
           <span class="button-label">Publicar mi primera demanda</span>
           <span class="button-spinner" aria-hidden="true"></span>
@@ -30,43 +30,13 @@
       </form>
     </div>
   </section>
-
-  <section class="dual-entry-strip">
-    <article class="card entry-card">
-      <p class="eyebrow">Para quien necesita algo</p>
-      <h2>Describe tu necesidad y recibe respuestas.</h2>
-      <ol class="entry-steps">
-        <li>Escribe tu necesidad en un cuadro de texto.</li>
-        <li>Completa solo los detalles imprescindibles.</li>
-        <li>Recibe ofertas y conversa directamente.</li>
-      </ol>
-      <a href="/demands/new?fresh=1" class="button button-ghost">Publicar demanda</a>
-    </article>
-
-    <article class="card entry-card">
-      <p class="eyebrow">Para quien vende u ofrece</p>
-      <h2>Explora oportunidades reales y contacta rápido.</h2>
-      <ol class="entry-steps">
-        <li>Consulta demandas recientes con presupuesto visible.</li>
-        <li>Filtra por ubicación, categoría o texto.</li>
-        <li>Responde y pasa a conversar por chat.</li>
-      </ol>
-      <a href="#explorar-demandas" class="button button-ghost">Explorar demandas</a>
-    </article>
-  </section>
 {% endif %}
 
 <section class="section-head" id="explorar-demandas">
   <div>
-    {% if current_user %}
-      <p class="eyebrow">Explorar</p>
-      <h1>Demandas publicadas</h1>
-      <p class="section-note">Filtra, detecta oportunidades y responde rápido desde una vista limpia.</p>
-    {% else %}
-      <p class="eyebrow">Explorar</p>
-      <h1>Últimas demandas publicadas</h1>
-      <p class="section-note">Una vista clara para detectar oportunidades reales y responder en pocos clics.</p>
-    {% endif %}
+    <p class="eyebrow">Explorar</p>
+    <h1>{{ "Demandas publicadas" if current_user else "Últimas demandas publicadas" }}</h1>
+    <p class="section-note">Busca por lenguaje natural y filtra por ubicación para encontrar oportunidades reales.</p>
   </div>
 </section>
 
@@ -76,7 +46,7 @@
       <div class="search-field-stack search-field-stack-filters">
         <label>Mis filtros</label>
         <div class="saved-filter-inline">
-          <select name="saved_filter_id" data-saved-filter-select>
+          <select name="saved_filter_id" onchange="this.form.submit()">
             <option value="">Mis filtros</option>
             {% for item in saved_filters %}
               <option value="{{ item.id }}" {{ 'selected' if current_saved_filter and current_saved_filter.id == item.id else '' }}>{{ item.name }}</option>
@@ -87,13 +57,10 @@
     {% endif %}
 
     <div class="search-field-stack">
-      <label>Palabras clave</label>
-      <div class="keyword-search" data-keyword-search="true">
-        <div class="keyword-search-input-wrap">
-          <input type="text" name="q" placeholder="Busca en el texto de la demanda" value="{{ search_filters.q }}" autocomplete="off" data-keyword-input>
-          <button type="button" class="keyword-search-clear" data-keyword-clear {% if not search_filters.q %}hidden{% endif %} aria-label="Limpiar palabras clave">×</button>
-        </div>
-        <div class="keyword-search-results" data-keyword-results hidden></div>
+      <label>Busca en lenguaje natural</label>
+      <div class="search-text-input-wrap">
+        <input type="text" name="q" placeholder="Ej.: alumnos en Sabadell que necesiten clases de física" value="{{ search_filters.q }}" data-natural-search-input>
+        <button type="button" class="zone-search-clear" data-natural-search-clear {% if not search_filters.q %}hidden{% endif %} aria-label="Limpiar búsqueda">×</button>
       </div>
     </div>
 
@@ -125,158 +92,13 @@
       </div>
     </div>
 
-    <div class="search-field-stack">
-      <label>Categorías</label>
-      <div class="category-filter" data-category-filter="true">
-        <input type="hidden" name="intent_domains_json" value='{{ search_filters.intent_domains_json }}' data-category-domains-input>
-        <input type="hidden" name="intent_types_json" value='{{ search_filters.intent_types_json }}' data-category-types-input>
-        <button type="button" class="category-filter-trigger" data-category-open>
-          <span data-category-summary>{{ search_filters.category_summary }}</span>
-        </button>
-        <button type="button" class="category-filter-clear" data-category-clear {% if not search_filters.intent_domains and not search_filters.intent_types %}hidden{% endif %} aria-label="Limpiar categorías">×</button>
-
-        <div class="category-modal" data-category-modal hidden>
-          <div class="category-modal-backdrop" data-category-close></div>
-          <div class="category-modal-panel">
-            <div class="category-modal-head">
-              <div>
-                <strong>Filtrar por categorías</strong>
-                <p class="small-note">Despliega los dominios y selecciona uno o varios tipos concretos dentro de ellos.</p>
-              </div>
-              <button type="button" class="category-modal-close" data-category-close>Cerrar</button>
-            </div>
-
-            <div class="category-modal-body">
-              <div class="category-browser" data-category-tree>
-                {% for domain in category_catalog %}
-                  <section class="category-browser-group" data-domain-group="{{ domain.code }}">
-                    <div class="category-browser-row">
-                      <button type="button" class="category-browser-toggle" data-category-toggle="{{ domain.code }}" aria-expanded="false" aria-controls="category-children-{{ loop.index }}">
-                        <span aria-hidden="true">▸</span>
-                      </button>
-                      <div class="category-browser-main">
-                        <button type="button" class="category-browser-name" data-category-domain-title="{{ domain.code }}">{{ domain.name }}</button>
-                      </div>
-                    </div>
-                    <div class="category-browser-children" id="category-children-{{ loop.index }}" hidden>
-                      {% for intent in domain.intent_types %}
-                        <div class="category-browser-child">
-                          <span class="category-browser-indent" aria-hidden="true"></span>
-                          <input type="checkbox" value="{{ intent.intent_type }}" data-category-type-checkbox data-parent-domain="{{ domain.code }}">
-                          <button type="button" class="category-browser-child-name" data-category-type-title="{{ intent.intent_type }}">{{ intent.display_name }}</button>
-                        </div>
-                      {% endfor %}
-                    </div>
-                  </section>
-                {% endfor %}
-              </div>
-            </div>
-
-            <div class="category-modal-foot">
-              <div class="category-modal-actions">
-                <button type="button" class="button button-ghost" data-category-reset>Limpiar</button>
-                <button type="button" class="button button-ghost" data-category-close>Cancelar</button>
-                <button type="button" class="button button-primary" data-category-apply>Aplicar categorías</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <div class="search-submit-stack">
       <button type="submit" class="button button-primary">Buscar</button>
+      {% if has_active_search %}
+        <a href="/" class="button button-ghost">Limpiar filtros</a>
+      {% endif %}
     </div>
   </form>
-
-  {% if current_user and (current_saved_filter or show_save_search_actions) %}
-    <div class="filter-utility-bar">
-      {% if current_saved_filter %}
-        <div class="filter-utility-copy">
-          <span class="filter-active-pill">Filtro: {{ current_saved_filter.name }}</span>
-          {% if not search_matches_current_saved_filter %}
-            <span class="small-note">Has modificado la búsqueda.</span>
-          {% endif %}
-        </div>
-      {% endif %}
-      <button
-        type="button"
-        class="button button-ghost compact-pill"
-        data-filter-modal-open="true"
-      >
-        {% if current_saved_filter and show_save_search_actions %}
-          Guardar cambios
-        {% elif current_saved_filter %}
-          Gestionar filtro
-        {% else %}
-          Guardar filtro
-        {% endif %}
-      </button>
-    </div>
-
-    <div class="filter-modal" id="filter-modal" hidden>
-      <div class="filter-modal-backdrop" data-filter-modal-close="true"></div>
-      <div class="filter-modal-panel">
-        <div class="filter-modal-head">
-          <div>
-            <strong>
-              {% if current_saved_filter and show_save_search_actions %}
-                Guardar cambios del filtro
-              {% elif current_saved_filter %}
-                Gestionar filtro
-              {% else %}
-                Guardar filtro
-              {% endif %}
-            </strong>
-            <p class="small-note">
-              {% if current_saved_filter and show_save_search_actions %}
-                Puedes actualizar el filtro usado o guardar esta búsqueda como una variante nueva.
-              {% elif current_saved_filter %}
-                Puedes renombrarlo, actualizarlo o eliminarlo.
-              {% else %}
-                Guarda esta búsqueda para reutilizarla cuando quieras.
-              {% endif %}
-            </p>
-          </div>
-          <button type="button" class="filter-modal-close" data-filter-modal-close="true">Cerrar</button>
-        </div>
-
-        <div class="filter-modal-body">
-          <form action="/filters" method="post" class="filter-modal-form">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            {% if current_saved_filter %}
-              <input type="hidden" name="filter_id" value="{{ current_saved_filter.id }}">
-            {% endif %}
-            <input type="hidden" name="query_text" value="{{ search_filters.q }}">
-            <input type="hidden" name="location" value="{{ search_filters.location }}">
-            <input type="hidden" name="location_zone_json" value='{{ search_filters.location_zone_json }}'>
-            <input type="hidden" name="intent_type" value="{{ search_filters.intent_type }}">
-            <input type="hidden" name="intent_domains_json" value='{{ search_filters.intent_domains_json }}'>
-            <input type="hidden" name="intent_types_json" value='{{ search_filters.intent_types_json }}'>
-            <label class="search-field-stack">
-              <span>Nombre del filtro</span>
-              <input type="text" name="name" placeholder="Nombre del filtro" value="{{ current_saved_filter.name if current_saved_filter else '' }}" required>
-            </label>
-            <div class="filter-modal-actions">
-              {% if current_saved_filter %}
-                <button type="submit" name="save_mode" value="create" class="button button-ghost">Guardar como nuevo</button>
-                <button type="submit" name="save_mode" value="update" class="button button-primary">Actualizar filtro</button>
-              {% else %}
-                <button type="submit" name="save_mode" value="create" class="button button-primary">Guardar filtro</button>
-              {% endif %}
-            </div>
-          </form>
-
-          {% if current_saved_filter %}
-            <form action="/filters/{{ current_saved_filter.id }}/delete" method="post" class="filter-modal-danger">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              <button type="submit" class="button button-ghost">Eliminar filtro</button>
-            </form>
-          {% endif %}
-        </div>
-      </div>
-    </div>
-  {% endif %}
 </section>
 
 <section class="home-results-head">
@@ -285,9 +107,10 @@
 
 <section class="demand-cards-grid">
   {% for demand in demands %}
-    {% set demand_text = demand.normalized_payload.raw_text or demand.attributes.get("description", demand.summary) %}
+    {% set demand_text = demand.original_text or demand.normalized_payload.raw_text or demand.summary %}
     {% set city_label = demand.location_display or demand.location or demand.location_label or "" %}
     {% set budget_view = demand_budget_display(demand) %}
+    {% set has_geo = demand.location_json and demand.location_json.center and demand.location_json.center.lat is not none and demand.location_json.center.lon is not none %}
     <article class="card demand-feed-card" id="demand-{{ demand.id }}">
       <div class="demand-feed-main">
         <div class="demand-feed-price{% if not budget_view.has_price %} is-empty{% endif %}">
@@ -298,61 +121,52 @@
         </div>
         <div class="title-inline">
           <h3>{{ demand_text[:100] }}{% if demand_text|length > 100 %}...{% endif %}</h3>
-          {% if debug_normalization %}
-            <button type="button" class="debug-json-trigger" data-json-target="normalized-demand-{{ demand.id }}" data-json-title="Normalized demand JSON · {{ demand.summary }}">json</button>
-          {% endif %}
         </div>
         <div class="demand-feed-meta">
           <span class="owner-pill">
             <span class="owner-icon" aria-hidden="true"></span>
-            <span>{{ (demand.owner_name or "Usuario")[:15] }}</span>
+            <span>{{ (demand.owner_name or "Usuario")[:18] }}</span>
           </span>
           <span>{{ demand.created_at.strftime("%d/%m/%Y %H:%M") if demand.created_at else "" }}</span>
-          {% if demand.location_json and (demand.location_json.geojson or demand.location_json.bbox or (demand.location_json.center and demand.location_json.center.lat is not none and demand.location_json.center.lon is not none)) %}
+          {% if city_label %}
             <span class="location-pill">
               <span class="location-icon" aria-hidden="true"></span>
-              <button
-                type="button"
-                class="location-map-link"
-                data-demand-map-toggle="demand-map-{{ demand.id }}"
-                aria-expanded="false"
-              >
-                {{ city_label }}
-              </button>
+              {% if has_geo %}
+                <button type="button" class="location-map-link" data-demand-map-toggle="demand-map-{{ demand.id }}" aria-expanded="false">{{ city_label }}</button>
+              {% else %}
+                <span>{{ city_label }}</span>
+              {% endif %}
             </span>
           {% endif %}
           <span>{{ demand.offer_count }} ofertas</span>
         </div>
       </div>
 
-      {% if demand.location_json and (demand.location_json.geojson or demand.location_json.bbox or (demand.location_json.center and demand.location_json.center.lat is not none and demand.location_json.center.lon is not none)) %}
+      {% if has_geo %}
         <div class="inline-location-map" id="demand-map-{{ demand.id }}" hidden>
           <div
             class="readonly-demand-map"
             data-readonly-map="true"
             data-zone='{{ demand.location_json | tojson }}'
-            data-label="{{ demand.location_json.label or city_label }}"
+            data-label="{{ city_label }}"
           ></div>
         </div>
       {% endif %}
 
       <div class="demand-feed-actions">
-        <p class="muted demand-feed-description">{{ demand.attributes.get("description", demand_text)[:110] }}{% if (demand.attributes.get("description", demand_text)|length) > 110 %}...{% endif %}</p>
+        <p class="muted demand-feed-description">{{ demand_text[:110] }}{% if demand_text|length > 110 %}...{% endif %}</p>
         <div class="demand-feed-action-row">
-          <a href="/demands/{{ demand.id }}" class="button button-primary">Ver detalle</a>
+          <a href="/demands/{{ demand.public_id }}" class="button button-primary">Ver detalle</a>
           {% if current_user and demand.viewer_has_offer %}
             <a href="/app/chats?offer_id={{ demand.viewer_offer_id }}" class="button button-ghost">Ir al chat</a>
           {% endif %}
         </div>
       </div>
-
-      {% if debug_normalization %}
-        <script type="application/json" id="normalized-demand-{{ demand.id }}">{{ demand.normalized_payload | tojson }}</script>
-      {% endif %}
     </article>
   {% else %}
     <article class="card empty-state">
-      <h3>No hay demandas que encajen con ese filtro.</h3>
+      <h3>No hay demandas que encajen con esa búsqueda.</h3>
+      <p class="muted">Prueba a cambiar el texto o ampliar la ubicación.</p>
     </article>
   {% endfor %}
 </section>
@@ -373,470 +187,24 @@
   </nav>
 {% endif %}
 
-{% if not current_user %}
-  <section class="how-it-works-inline">
-    <div class="section-head compact">
-      <div>
-        <p class="eyebrow">Cómo funciona</p>
-        <h2>Una mecánica simple para los dos lados del marketplace</h2>
-      </div>
-      <a href="/how-it-works" class="button button-ghost">Ver explicación completa</a>
-    </div>
-    <div class="steps-grid">
-      <article class="card step-card">
-        <strong>1. Publicas lo que necesitas</strong>
-        <p class="muted">Empiezas con texto libre y solo completamos los detalles importantes.</p>
-      </article>
-      <article class="card step-card">
-        <strong>2. Otros usuarios detectan tu demanda</strong>
-        <p class="muted">La encuentran por filtros de precio, zona, categoría o texto.</p>
-      </article>
-      <article class="card step-card">
-        <strong>3. Empezáis a hablar</strong>
-        <p class="muted">La negociación ya sucede en una conversación directa dentro de la app.</p>
-      </article>
-    </div>
-  </section>
-{% endif %}
-
 <script>
-  const keywordSuggestions = {{ keyword_suggestions | tojson }};
-  const categoryCatalog = {{ category_catalog | tojson }};
-  const updateRemainingTimes = () => {
-    document.querySelectorAll('.remaining-time').forEach((element) => {
-      const raw = element.dataset.expiresAt;
-      if (!raw) {
-        element.textContent = 'sin fecha';
-        return;
-      }
-      const expires = new Date(raw);
-      const diffMs = expires - new Date();
-      if (diffMs <= 0) {
-        element.textContent = 'caducada';
-        return;
-      }
-      const totalMinutes = Math.floor(diffMs / 60000);
-      const hours = Math.floor(totalMinutes / 60);
-      const minutes = totalMinutes % 60;
-      element.textContent = `faltan ${hours}h ${minutes}m`;
-    });
-  };
-  updateRemainingTimes();
-  window.setInterval(updateRemainingTimes, 60000);
-
   (() => {
-    const compactZoneForQuery = (payload) => {
-      if (!payload || typeof payload !== 'object') return payload;
-      const clone = JSON.parse(JSON.stringify(payload));
-      if (clone.mode === 'area') {
-        const center = clone.center || {};
-        let lat = Number(center.lat);
-        let lon = Number(center.lon);
-        const bbox = Array.isArray(clone.bbox) && clone.bbox.length === 4 ? clone.bbox.map(Number) : null;
-        if ((!Number.isFinite(lat) || !Number.isFinite(lon)) && bbox) {
-          lon = (bbox[0] + bbox[2]) / 2;
-          lat = (bbox[1] + bbox[3]) / 2;
-        }
-        let radiusBucket = clone.radius_bucket || '10km';
-        let radiusKm = Number.isFinite(Number(clone.radius_km)) ? Number(clone.radius_km) : null;
-        if (bbox && Number.isFinite(lat) && Number.isFinite(lon)) {
-          const toRadians = (value) => (value * Math.PI) / 180;
-          const haversineKm = (lat1, lon1, lat2, lon2) => {
-            const earthRadiusKm = 6371;
-            const dLat = toRadians(lat2 - lat1);
-            const dLon = toRadians(lon2 - lon1);
-            const a =
-              Math.sin(dLat / 2) ** 2 +
-              Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(dLon / 2) ** 2;
-            return earthRadiusKm * 2 * Math.asin(Math.sqrt(a));
-          };
-          const corners = [
-            [bbox[1], bbox[0]],
-            [bbox[1], bbox[2]],
-            [bbox[3], bbox[0]],
-            [bbox[3], bbox[2]],
-          ];
-          const estimate = corners.reduce((maxDistance, [cornerLat, cornerLon]) => {
-            return Math.max(maxDistance, haversineKm(lat, lon, cornerLat, cornerLon));
-          }, 0);
-          const buckets = [
-            { radius_bucket: '1km', radius_km: 1, ref: 1 },
-            { radius_bucket: '2km', radius_km: 2, ref: 2 },
-            { radius_bucket: '5km', radius_km: 5, ref: 5 },
-            { radius_bucket: '10km', radius_km: 10, ref: 10 },
-            { radius_bucket: '30km', radius_km: 30, ref: 30 },
-            { radius_bucket: '50km', radius_km: 50, ref: 50 },
-            { radius_bucket: '100km', radius_km: 100, ref: 100 },
-            { radius_bucket: '200km', radius_km: 200, ref: 200 },
-            { radius_bucket: '200_plus', radius_km: null, ref: 220 },
-          ];
-          const best = buckets.reduce((winner, candidate) => {
-            return Math.abs(candidate.ref - estimate) < Math.abs(winner.ref - estimate) ? candidate : winner;
-          }, buckets[0]);
-          radiusBucket = best.radius_bucket;
-          radiusKm = best.radius_km;
-        }
-        return {
-          mode: 'area',
-          label: clone.label || '',
-          center: {
-            lat: Number.isFinite(lat) ? lat : null,
-            lon: Number.isFinite(lon) ? lon : null,
-          },
-          radius_km: radiusKm,
-          radius_bucket: radiusBucket,
-          source: clone.source || '',
-          raw_query: clone.raw_query || '',
-          admin_level: clone.admin_level || '',
-          bbox: null,
-          geojson: null,
-        };
-      }
-      clone.geojson = null;
-      return clone;
-    };
+    const defaultBounds = [[27.5, -18.5], [43.9, 4.8]];
+    const searchInput = document.querySelector('[data-natural-search-input]');
+    const searchClear = document.querySelector('[data-natural-search-clear]');
 
-    const filterModal = document.getElementById('filter-modal');
-    if (filterModal) {
-      const openFilterModal = () => {
-        filterModal.hidden = false;
-        document.body.classList.add('modal-open');
-        filterModal.querySelector('input[name="name"]')?.focus();
+    if (searchInput && searchClear) {
+      const syncClear = () => {
+        searchClear.hidden = !searchInput.value.trim();
       };
-      const closeFilterModal = () => {
-        filterModal.hidden = true;
-        document.body.classList.remove('modal-open');
-      };
-
-      document.querySelectorAll('[data-filter-modal-open="true"]').forEach((button) => {
-        button.addEventListener('click', openFilterModal);
-      });
-      filterModal.querySelectorAll('[data-filter-modal-close="true"]').forEach((button) => {
-        button.addEventListener('click', closeFilterModal);
-      });
-      document.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape' && !filterModal.hidden) {
-          closeFilterModal();
-        }
+      syncClear();
+      searchInput.addEventListener('input', syncClear);
+      searchClear.addEventListener('click', () => {
+        searchInput.value = '';
+        syncClear();
+        searchInput.form?.submit();
       });
     }
-
-    document.querySelectorAll('[data-saved-filter-select]').forEach((select) => {
-      select.addEventListener('change', () => {
-        const url = new URL(window.location.pathname, window.location.origin);
-        const value = select.value.trim();
-        if (!value) {
-          window.location.href = url.pathname;
-          return;
-        }
-        url.searchParams.set('saved_filter_id', value);
-        window.location.href = `${url.pathname}?${url.searchParams.toString()}`;
-      });
-    });
-
-    document.querySelectorAll('.search-grid-home').forEach((form) => {
-      form.addEventListener('submit', () => {
-        const input = form.querySelector('input[name="location_zone_json"]');
-        const labelInput = form.querySelector('input[name="location"]');
-        if (!input || !input.value) {
-          if (labelInput && !labelInput.value.trim()) {
-            labelInput.disabled = true;
-          }
-          return;
-        }
-        try {
-          const compact = compactZoneForQuery(JSON.parse(input.value));
-          const hasGeometry = compact && (
-            (compact.center && compact.center.lat != null && compact.center.lon != null)
-            || compact.geojson
-            || (Array.isArray(compact.bbox) && compact.bbox.length === 4)
-          );
-          if (!hasGeometry) {
-            input.disabled = true;
-            if (labelInput && !labelInput.value.trim()) {
-              labelInput.disabled = true;
-            }
-            return;
-          }
-          input.value = JSON.stringify(compact);
-        } catch (_) {
-        }
-      });
-    });
-
-    document.querySelectorAll('[data-category-filter="true"]').forEach((root) => {
-      const modal = root.querySelector('[data-category-modal]');
-      const openButtons = root.querySelectorAll('[data-category-open]');
-      const closeButtons = root.querySelectorAll('[data-category-close]');
-      const applyButton = root.querySelector('[data-category-apply]');
-      const resetButton = root.querySelector('[data-category-reset]');
-      const clearButton = root.querySelector('[data-category-clear]');
-      const summary = root.querySelector('[data-category-summary]');
-      const domainsInput = root.querySelector('[data-category-domains-input]');
-      const typesInput = root.querySelector('[data-category-types-input]');
-      const tree = root.querySelector('[data-category-tree]');
-      const typeCheckboxes = [...root.querySelectorAll('[data-category-type-checkbox]')];
-      const toggleButtons = [...root.querySelectorAll('[data-category-toggle]')];
-      const domainTitleButtons = [...root.querySelectorAll('[data-category-domain-title]')];
-      const typeTitleButtons = [...root.querySelectorAll('[data-category-type-title]')];
-      if (!modal || !domainsInput || !typesInput || !summary || !tree || !typeCheckboxes.length) return;
-
-      let appliedDomains = [];
-      let appliedTypes = [];
-      let workingDomains = [];
-      let workingTypes = [];
-
-      const parseList = (raw) => {
-        try {
-          const value = JSON.parse(raw || '[]');
-          return Array.isArray(value) ? value.filter((item) => typeof item === 'string' && item.trim()) : [];
-        } catch (_) {
-          return [];
-        }
-      };
-
-      const uniq = (items) => [...new Set(items.filter(Boolean))];
-      const computeDomainsFromTypes = (types) => uniq(
-        types.map((intentType) => typeMeta(intentType)?.domain_code).filter(Boolean)
-      );
-      const domainName = (code) => categoryCatalog.find((item) => item.code === code)?.name || code;
-      const typeMeta = (intentType) => {
-        for (const domain of categoryCatalog) {
-          const match = (domain.intent_types || []).find((item) => item.intent_type === intentType);
-          if (match) return { ...match, domain_code: domain.code, domain_name: domain.name };
-        }
-        return null;
-      };
-      const summaryText = (domains, types) => {
-        if (!domains.length && !types.length) return 'Todas';
-        if (types.length) {
-          const firstType = typeMeta(types[0]);
-          if (types.length === 1 && firstType) {
-            return `${firstType.domain_name} / ${firstType.display_name}`;
-          }
-          if (domains.length === 1) {
-            return `${domainName(domains[0])} + ${types.length - 1}`;
-          }
-          return `${types.length} tipos`;
-        }
-        if (domains.length === 1) return `${domainName(domains[0])}`;
-        return `${domains.length} dominios`;
-      };
-
-      const syncControls = () => {
-        categoryCatalog.forEach((domain) => {
-          const domainCode = domain.code;
-          const childTypes = typeCheckboxes.filter((item) => item.dataset.parentDomain === domainCode);
-          const selectedChildren = childTypes.filter((item) => workingTypes.includes(item.value));
-          const group = root.querySelector(`[data-domain-group="${domainCode}"]`);
-          const children = group?.querySelector('.category-browser-children');
-          const toggle = group?.querySelector('[data-category-toggle]');
-          const shouldOpen = selectedChildren.length > 0;
-          if (children) children.hidden = !shouldOpen && !group?.dataset.manuallyOpened;
-          if (toggle) {
-            const expanded = !(children?.hidden);
-            toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-            const icon = toggle.querySelector('span[aria-hidden="true"]');
-            if (icon) icon.textContent = expanded ? '▾' : '▸';
-          }
-        });
-        typeCheckboxes.forEach((checkbox) => {
-          checkbox.checked = workingTypes.includes(checkbox.value);
-        });
-      };
-
-      const updateSummary = () => {
-        summary.textContent = summaryText(appliedDomains, appliedTypes);
-        if (clearButton) clearButton.hidden = !(appliedDomains.length || appliedTypes.length);
-      };
-
-      const persistApplied = () => {
-        appliedDomains = computeDomainsFromTypes(appliedTypes);
-        domainsInput.value = JSON.stringify(appliedDomains);
-        typesInput.value = JSON.stringify(appliedTypes);
-        updateSummary();
-      };
-
-      const openModal = () => {
-        workingDomains = [...appliedDomains];
-        workingTypes = [...appliedTypes];
-        syncControls();
-        modal.hidden = false;
-        document.body.classList.add('has-category-modal');
-      };
-
-      const closeModal = (discard = true) => {
-        if (discard) {
-          workingDomains = [...appliedDomains];
-          workingTypes = [...appliedTypes];
-          syncControls();
-        }
-        modal.hidden = true;
-        document.body.classList.remove('has-category-modal');
-      };
-
-      appliedTypes = uniq(parseList(typesInput.value));
-      appliedDomains = computeDomainsFromTypes(appliedTypes);
-      updateSummary();
-
-      typeCheckboxes.forEach((checkbox) => {
-        checkbox.addEventListener('change', () => {
-          const domainCode = checkbox.dataset.parentDomain;
-          const siblingTypes = typeCheckboxes.filter((item) => item.dataset.parentDomain === domainCode);
-          if (checkbox.checked) {
-            workingTypes = uniq([...workingTypes, checkbox.value]);
-            const allSelected = siblingTypes.every((item) => workingTypes.includes(item.value));
-            if (allSelected) {
-              workingDomains = uniq([...workingDomains, domainCode]);
-            }
-          } else {
-            workingTypes = workingTypes.filter((item) => item !== checkbox.value);
-            workingDomains = workingDomains.filter((item) => item !== domainCode);
-          }
-          workingDomains = computeDomainsFromTypes(workingTypes);
-          syncControls();
-        });
-      });
-
-      domainTitleButtons.forEach((button) => {
-        button.addEventListener('click', (event) => {
-          event.preventDefault();
-          const domainCode = button.dataset.categoryDomainTitle;
-          const toggle = toggleButtons.find((item) => item.dataset.categoryToggle === domainCode);
-          toggle?.click();
-        });
-      });
-
-      typeTitleButtons.forEach((button) => {
-        button.addEventListener('click', (event) => {
-          event.preventDefault();
-          const intentType = button.dataset.categoryTypeTitle;
-          const checkbox = typeCheckboxes.find((item) => item.value === intentType);
-          if (!checkbox) return;
-          checkbox.checked = !checkbox.checked;
-          checkbox.dispatchEvent(new Event('change', { bubbles: true }));
-        });
-      });
-
-      toggleButtons.forEach((button) => {
-        button.addEventListener('click', (event) => {
-          event.preventDefault();
-          const domainCode = button.dataset.categoryToggle;
-          const group = root.querySelector(`[data-domain-group="${domainCode}"]`);
-          const children = group?.querySelector('.category-browser-children');
-          if (!group || !children) return;
-          const willOpen = children.hidden;
-          children.hidden = !willOpen;
-          group.dataset.manuallyOpened = willOpen ? 'true' : '';
-          button.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
-          const icon = button.querySelector('span[aria-hidden="true"]');
-          if (icon) icon.textContent = willOpen ? '▾' : '▸';
-        });
-      });
-
-      openButtons.forEach((button) => {
-        button.addEventListener('click', (event) => {
-          event.preventDefault();
-          openModal();
-        });
-      });
-
-      closeButtons.forEach((button) => {
-        button.addEventListener('click', (event) => {
-          event.preventDefault();
-          closeModal(true);
-        });
-      });
-
-      resetButton?.addEventListener('click', (event) => {
-        event.preventDefault();
-        workingDomains = [];
-        workingTypes = [];
-        syncControls();
-      });
-
-      applyButton?.addEventListener('click', (event) => {
-        event.preventDefault();
-        appliedDomains = uniq(workingDomains);
-        appliedTypes = uniq(workingTypes);
-        persistApplied();
-        closeModal(false);
-      });
-
-      clearButton?.addEventListener('click', (event) => {
-        event.preventDefault();
-        appliedDomains = [];
-        appliedTypes = [];
-        persistApplied();
-      });
-
-      document.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape' && !modal.hidden) {
-          closeModal(true);
-        }
-      });
-    });
-
-    document.querySelectorAll('[data-keyword-search="true"]').forEach((root) => {
-      const input = root.querySelector('[data-keyword-input]');
-      const clear = root.querySelector('[data-keyword-clear]');
-      const results = root.querySelector('[data-keyword-results]');
-      if (!input || !results) return;
-
-      const hideResults = () => {
-        results.hidden = true;
-      };
-
-      const renderResults = (items) => {
-        results.innerHTML = '';
-        if (!items.length) {
-          hideResults();
-          return;
-        }
-        items.forEach((item) => {
-          const button = document.createElement('button');
-          button.type = 'button';
-          button.className = 'keyword-result-item';
-          button.textContent = item;
-          button.addEventListener('click', () => {
-            input.value = item;
-            if (clear) clear.hidden = false;
-            hideResults();
-          });
-          results.appendChild(button);
-        });
-        results.hidden = false;
-      };
-
-      const updateSuggestions = () => {
-        const raw = input.value.trim().toLowerCase();
-        if (clear) clear.hidden = !raw;
-        if (!raw) {
-          hideResults();
-          return;
-        }
-        const matches = keywordSuggestions
-          .filter((item) => item.toLowerCase().includes(raw))
-          .slice(0, 8);
-        renderResults(matches);
-      };
-
-      input.addEventListener('input', updateSuggestions);
-      input.addEventListener('focus', updateSuggestions);
-      clear?.addEventListener('click', (event) => {
-        event.preventDefault();
-        input.value = '';
-        clear.hidden = true;
-        hideResults();
-        input.focus();
-      });
-
-      document.addEventListener('click', (event) => {
-        if (!root.contains(event.target)) {
-          hideResults();
-        }
-      });
-    });
 
     const ensureMap = (container) => {
       if (!container || container.dataset.mapReady === 'true' || !window.L) return;
@@ -846,10 +214,6 @@
       } catch (_) {
         zone = {};
       }
-      const defaultBounds = [
-        [36.0, -9.9],
-        [44.2, 4.2],
-      ];
       const map = L.map(container, {
         zoomControl: true,
         dragging: true,
@@ -857,65 +221,45 @@
         doubleClickZoom: false,
         boxZoom: false,
         keyboard: false,
-        tap: true,
         touchZoom: true,
       });
-      let resetView = null;
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: "&copy; OpenStreetMap contributors",
         maxZoom: 19,
       }).addTo(map);
+
       const center = zone.center || {};
       const hasCenter = Number.isFinite(Number(center.lat)) && Number.isFinite(Number(center.lon));
-      if (zone.mode === 'area' && (zone.geojson || (Array.isArray(zone.bbox) && zone.bbox.length === 4))) {
-        const layer = zone.geojson
-          ? L.geoJSON(zone.geojson, {
-              style: {
-                color: "#0f766e",
-                weight: 2,
-                fillColor: "rgba(15, 118, 110, 0.18)",
-                fillOpacity: 0.3,
-              },
-            }).addTo(map)
-          : L.rectangle(
-              [
-                [Number(zone.bbox[1]), Number(zone.bbox[0])],
-                [Number(zone.bbox[3]), Number(zone.bbox[2])],
-              ],
-              {
-                color: "#0f766e",
-                weight: 2,
-                fillColor: "rgba(15, 118, 110, 0.18)",
-                fillOpacity: 0.3,
-              }
-            ).addTo(map);
-        const bounds = layer.getBounds();
-        if (bounds.isValid()) {
-          map.fitBounds(bounds.pad(0.15));
-          resetView = { type: 'bounds', value: bounds.pad(0.15) };
-        } else if (hasCenter) {
-          map.setView([Number(center.lat), Number(center.lon)], 10);
-          resetView = { type: 'view', value: [[Number(center.lat), Number(center.lon)], 10] };
-        }
-      } else if (hasCenter) {
-        const radiusBucket = zone.radius_bucket || '10km';
-        const radiusKm = Number.isFinite(Number(zone.radius_km)) ? Number(zone.radius_km) : ({ "1km":1, "2km":2, "5km":5, "10km":10, "30km":30, "50km":50, "100km":100, "200km":200, "200_plus":220 }[radiusBucket] || 10);
+      let resetView = null;
+
+      if (hasCenter) {
         const lat = Number(center.lat);
         const lon = Number(center.lon);
+        const radiusKm = Number.isFinite(Number(zone.radius_km)) ? Number(zone.radius_km) : 10;
         map.setView([lat, lon], radiusKm <= 5 ? 12 : 10);
         resetView = { type: 'view', value: [[lat, lon], radiusKm <= 5 ? 12 : 10] };
-        L.marker([lat, lon]).addTo(map);
-        L.circle([lat, lon], {
+
+        const circle = L.circle([lat, lon], {
           radius: radiusKm * 1000,
           color: "#0f766e",
+          weight: 2,
           fillColor: "rgba(15, 118, 110, 0.18)",
           fillOpacity: 0.35,
-          weight: 2,
         }).addTo(map);
+        const marker = L.marker([lat, lon]).addTo(map);
+        const label = container.dataset.label || zone.label || '';
+        if (label) marker.bindPopup(label);
+
+        const bounds = circle.getBounds();
+        if (bounds.isValid()) {
+          map.fitBounds(bounds.pad(0.2));
+          resetView = { type: 'bounds', value: bounds.pad(0.2) };
+        }
       } else {
         map.fitBounds(defaultBounds, { padding: [18, 18] });
         resetView = { type: 'bounds', value: L.latLngBounds(defaultBounds).pad(0.0) };
       }
+
       container.dataset.mapReady = 'true';
       container.__resetMapView = () => {
         if (!resetView) return;
@@ -926,33 +270,42 @@
         }
         window.setTimeout(() => map.invalidateSize(), 40);
       };
+
       window.setTimeout(() => {
         map.invalidateSize();
-        if (zone.mode === 'area' && (zone.geojson || (Array.isArray(zone.bbox) && zone.bbox.length === 4))) {
-          const bounds = map.getBounds();
-          if (!bounds.isValid()) {
-            map.fitBounds(defaultBounds, { padding: [18, 18] });
-          }
-        }
       }, 80);
     };
 
-    document.querySelectorAll('[data-demand-map-toggle]').forEach((button) => {
-      button.addEventListener('click', () => {
-        const target = document.getElementById(button.dataset.demandMapToggle);
-        if (!target) return;
-        const willOpen = target.hidden;
-        target.hidden = !target.hidden;
-        button.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
-        if (willOpen) {
-          const container = target.querySelector('[data-readonly-map="true"]');
-          ensureMap(container);
-          if (container?.__resetMapView) {
-            window.setTimeout(() => container.__resetMapView(), 50);
+    const bindMapToggles = () => {
+      if (!window.L) {
+        window.setTimeout(bindMapToggles, 120);
+        return;
+      }
+      document.querySelectorAll('[data-demand-map-toggle]').forEach((button) => {
+        if (button.dataset.bound === 'true') return;
+        button.dataset.bound = 'true';
+        button.addEventListener('click', () => {
+          const target = document.getElementById(button.dataset.demandMapToggle);
+          if (!target) return;
+          const willOpen = target.hidden;
+          target.hidden = !willOpen;
+          button.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+          if (willOpen) {
+            const mapNode = target.querySelector('[data-readonly-map]');
+            ensureMap(mapNode);
+            if (mapNode?.__resetMapView) {
+              window.setTimeout(() => mapNode.__resetMapView(), 50);
+            }
           }
-        }
+        });
       });
-    });
+    };
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', bindMapToggles);
+    } else {
+      bindMapToggles();
+    }
   })();
 </script>
 {% endblock %}

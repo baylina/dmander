@@ -80,7 +80,7 @@
     if (clone.mode === "area") {
       const derived = deriveRadiusZoneFromArea(clone);
       return {
-        mode: "area",
+        mode: "radius_from_point",
         label: clone.label || "",
         center: derived.center,
         radius_km: derived.radius_km,
@@ -437,36 +437,6 @@
         }
       };
 
-      if (zone.mode === "area" && (zone.geojson || (Array.isArray(zone.bbox) && zone.bbox.length === 4))) {
-        geoLayer = zone.geojson
-          ? L.geoJSON(zone.geojson, {
-              style: {
-                color: "#0f766e",
-                weight: 2,
-                fillColor: "rgba(15, 118, 110, 0.18)",
-                fillOpacity: 0.3,
-              },
-            }).addTo(map)
-          : L.rectangle(
-              [
-                [Number(zone.bbox[1]), Number(zone.bbox[0])],
-                [Number(zone.bbox[3]), Number(zone.bbox[2])],
-              ],
-              {
-                color: "#0f766e",
-                weight: 2,
-                fillColor: "rgba(15, 118, 110, 0.18)",
-                fillOpacity: 0.3,
-              }
-            ).addTo(map);
-        syncHiddenFields();
-        fitCurrentZone();
-        window.setTimeout(() => {
-          map.invalidateSize();
-          fitCurrentZone();
-        }, 60);
-        return;
-      }
       if (!hasCenter) {
         syncHiddenFields();
         fitDefaultView();
@@ -493,13 +463,9 @@
 
     const applySelection = (selection) => {
       const requestedMode = selection.forceMode || selection.mode || "radius_from_point";
-      const nextMode =
-        requestedMode === "area" && (selection.geojson || (Array.isArray(selection.bbox) && selection.bbox.length === 4))
-          ? "area"
-          : "radius_from_point";
-      zone = {
+      const baseZone = {
         ...zone,
-        mode: nextMode,
+        mode: requestedMode,
         label: selection.label || "Punto seleccionado en el mapa",
         center: selection.center || zone.center,
         source: selection.source || zone.source || "map_click",
@@ -508,28 +474,26 @@
         bbox: selection.bbox || null,
         geojson: selection.geojson || null,
       };
-      if (nextMode !== "area") {
-        preferredMode = "radius";
-        zone.radius_bucket = zone.radius_bucket || "10km";
-        zone.radius_km = normalizeRadius(zone.radius_bucket).radiusKm;
-        zone.geojson = null;
-        zone.bbox = null;
-        zone.admin_level = "";
-        manualZoneCache = JSON.parse(JSON.stringify(zone));
-      } else {
-        preferredMode = "area";
-        zone.radius_bucket = "";
-        zone.radius_km = null;
-        adminZoneCache = JSON.parse(JSON.stringify(zone));
-      }
-      if (nextMode === "area" && collapsibleMap) {
-        mapPanel?.classList.remove("is-collapsed");
-        window.setTimeout(() => {
-          map.invalidateSize();
-          drawZone();
-        }, 80);
-        return;
-      }
+      zone =
+        requestedMode === "area"
+          ? {
+              ...deriveRadiusZoneFromArea(baseZone),
+              label: baseZone.label,
+              source: baseZone.source,
+              raw_query: baseZone.raw_query,
+              admin_level: baseZone.admin_level,
+            }
+          : {
+              ...baseZone,
+              mode: "radius_from_point",
+              radius_bucket: baseZone.radius_bucket || "10km",
+              radius_km: normalizeRadius(baseZone.radius_bucket || "10km").radiusKm,
+              bbox: null,
+              geojson: null,
+            };
+      preferredMode = "radius";
+      adminZoneCache = null;
+      manualZoneCache = JSON.parse(JSON.stringify(zone));
       drawZone();
     };
 

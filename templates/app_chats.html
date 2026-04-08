@@ -54,7 +54,7 @@
         <div class="chat-compose-note" id="chat-thread-status-note" hidden></div>
         <form id="chat-thread-form" class="chat-compose modern-compose">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <textarea name="body" rows="3" placeholder="Escribe tu mensaje..." required></textarea>
+          <textarea name="body" rows="3" maxlength="200" placeholder="Escribe tu mensaje..." required></textarea>
           <button type="submit" class="button button-primary chat-send-button">Enviar</button>
         </form>
       </div>
@@ -237,7 +237,7 @@
               ${(item.can_reactivate ? `<button type="button" class="demand-icon-button" data-demand-action="reactivate" data-demand-action-id="${item.id}" title="Despausar demanda" aria-label="Despausar demanda">▶</button>` : '')}
               ${(item.can_delete ? `<button type="button" class="demand-icon-button is-danger" data-demand-action="delete" data-demand-action-id="${item.id}" title="Eliminar demanda" aria-label="Eliminar demanda">🗑</button>` : '')}
               `}
-              <a href="/demands/${item.id}${selectedDemandId === item.id && selectedOfferId ? `?offer_id=${selectedOfferId}` : ''}" class="button button-ghost button-small">Ver detalles</a>
+              <a href="/demands/${item.public_id}${selectedDemandId === item.id && selectedOfferId ? `?offer_id=${selectedOfferId}` : ''}" class="button button-ghost button-small">Ver detalles</a>
           </div>
         </article>
       `).join('') || '<div class="chat-empty"><p>No tienes demandas con respuesta todavía.</p></div>';
@@ -290,7 +290,7 @@
             ${(offer.can_hide ? `<button type="button" class="demand-icon-button" data-offer-action="hide" data-offer-action-id="${offer.offer_id}" title="Ocultar demanda" aria-label="Ocultar demanda"><svg class="action-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.6-6 9.5-6 9.5 6 9.5 6-3.6 6-9.5 6-9.5-6-9.5-6Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4 20 20 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>` : '')}
             ${(offer.can_unhide ? `<button type="button" class="demand-icon-button" data-offer-action="unhide" data-offer-action-id="${offer.offer_id}" title="Mostrar demanda" aria-label="Mostrar demanda"><svg class="action-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.6-6 9.5-6 9.5 6 9.5 6-3.6 6-9.5 6-9.5-6-9.5-6Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.8" fill="none" stroke="currentColor" stroke-width="1.8"/></svg></button>` : '')}
             `}
-            <a href="/demands/${offer.demand_id}" class="button button-ghost button-small">Ver detalles</a>
+            <a href="/demands/${offer.demand_public_id}" class="button button-ghost button-small">Ver detalles</a>
           </div>
         </article>
       `).join('') || '<div class="chat-empty"><p>No tienes demandas en este filtro.</p></div>';
@@ -312,19 +312,37 @@
       renderOwnerConversationList();
     };
 
-    const openThread = async (offerId) => {
-      const response = await fetch(`/api/offers/${offerId}/thread?x=1${workspaceQuery()}`, { headers: { Accept: 'application/json' }});
-      if (!response.ok) return null;
-      return response.json();
+    const currentThreadData = () => {
+      if (activeRole === 'owner') {
+        const demand = selectedDemand();
+        const conversation = selectedOwnerConversation();
+        if (!demand || !conversation) return null;
+        return {
+          id: conversation.offer_id,
+          messages: conversation.messages || [],
+          can_reply: !!demand.can_interact && !adminReadOnly,
+          effective_status: demand.effective_status || demand.status || 'open',
+          read_only: adminReadOnly,
+        };
+      }
+      const offer = selectedSupplierOffer();
+      if (!offer) return null;
+      return {
+        id: offer.offer_id,
+        messages: offer.messages || [],
+        can_reply: !!offer.can_interact && !adminReadOnly,
+        effective_status: offer.effective_status || offer.status || 'open',
+        read_only: adminReadOnly,
+      };
     };
 
-    const renderThread = async () => {
+    const renderThread = () => {
       if (!selectedOfferId) {
         threadEmpty.hidden = false;
         threadLive.hidden = true;
         return;
       }
-      const thread = await openThread(selectedOfferId);
+      const thread = currentThreadData();
       if (!thread) {
         threadEmpty.hidden = false;
         threadLive.hidden = true;
@@ -376,7 +394,7 @@
       } else {
         renderSupplierMode();
       }
-      await renderThread();
+      renderThread();
       roleTabs.forEach((button) => button.classList.toggle('is-active', button.dataset.chatRole === activeRole));
     };
 
@@ -398,7 +416,8 @@
       await renderWorkspace();
     };
 
-    const connectWorkspaceStream = () => {
+    let workspaceReconnectTimer = null;
+    const stopWorkspaceRealtime = () => {
       if (workspaceSource) {
         workspaceSource.close();
         workspaceSource = null;
@@ -407,9 +426,20 @@
         window.clearInterval(workspaceFallbackTimer);
         workspaceFallbackTimer = null;
       }
+      if (workspaceReconnectTimer) {
+        window.clearTimeout(workspaceReconnectTimer);
+        workspaceReconnectTimer = null;
+      }
+    };
+
+    const connectWorkspaceStream = () => {
+      stopWorkspaceRealtime();
+      if (document.hidden) return;
       if (!('EventSource' in window)) {
         fetchWorkspace();
-        workspaceFallbackTimer = window.setInterval(fetchWorkspace, 8000);
+        workspaceFallbackTimer = window.setInterval(() => {
+          if (!document.hidden) fetchWorkspace();
+        }, 30000);
         return;
       }
       workspaceSource = new EventSource(`/api/workspace/stream?demand_status=${encodeURIComponent(activeDemandStatusFilter)}&offer_filter=${encodeURIComponent(activeOfferFilter)}${workspaceQuery()}`);
@@ -421,13 +451,22 @@
         }
       });
       workspaceSource.addEventListener('error', () => {
-        workspaceSource?.close();
-        workspaceSource = null;
-        if (workspaceFallbackTimer) return;
-        fetchWorkspace();
-        workspaceFallbackTimer = window.setInterval(fetchWorkspace, 12000);
+        stopWorkspaceRealtime();
+        if (document.hidden || workspaceReconnectTimer) return;
+        workspaceReconnectTimer = window.setTimeout(() => {
+          workspaceReconnectTimer = null;
+          connectWorkspaceStream();
+        }, 5000);
       });
     };
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        stopWorkspaceRealtime();
+        return;
+      }
+      connectWorkspaceStream();
+    });
 
     roleTabs.forEach((button) => {
       button.addEventListener('click', async () => {

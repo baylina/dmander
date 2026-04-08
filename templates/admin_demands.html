@@ -22,7 +22,7 @@
               <button type="button" class="debug-json-trigger" data-json-target="admin-demand-{{ demand.id }}" data-json-title="Normalized demand JSON · {{ demand.summary }}">json</button>
             {% endif %}
           </div>
-          <p class="small-note">{{ demand.owner_name }} · {{ demand.intent_domain or "sin dominio" }} / {{ demand.intent_type }} · {{ demand.created_at.strftime("%d/%m/%Y %H:%M") if demand.created_at else "" }}</p>
+          <p class="small-note">{{ demand.owner_name }} · {{ demand.created_at.strftime("%d/%m/%Y %H:%M") if demand.created_at else "" }}</p>
         </div>
         <div class="thread-actions">
           <a href="/demands/{{ demand.id }}/edit" class="row-link-tool">Editar</a>
@@ -34,11 +34,11 @@
           <span class="pill">{{ demand.status }}</span>
         </div>
       </div>
-      <p class="muted">{{ demand.normalized_payload.description or demand.attributes.get("description", "Sin descripción") }}</p>
+      <p class="muted">{{ demand.original_text or demand.attributes.get("description", "Sin descripción") }}</p>
       <div class="meta-row">
         <span>{{ demand.location or "Sin ubicación" }}</span>
-        <span>{{ demand.normalized_payload.required_missing_fields | length }} required missing</span>
-        <span>{{ demand.normalized_payload.recommended_missing_fields | length }} recommended missing</span>
+        <span>{{ demand.budget_max ~ " €" if demand.budget_max else "Sin precio máximo" }}</span>
+        <span>{{ demand.suggested_missing_details | length }} sugerencias</span>
       </div>
       {% if debug_normalization %}
         <script type="application/json" id="admin-demand-{{ demand.id }}">{{ demand.normalized_payload | tojson }}</script>
