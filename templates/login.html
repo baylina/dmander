@@ -5,32 +5,43 @@
   <article class="card auth-card">
     <p class="eyebrow">Acceso seguro</p>
     <h1>Inicia sesión</h1>
-    <p class="muted">Accede con email y contraseña o usa una cuenta social configurada.</p>
+    <p class="muted">Accede con Google o usa tu email y contraseña.</p>
 
-    <form action="/login" method="post" class="form-stack">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label>
-        <span>Email</span>
-        <input type="email" name="email" placeholder="tu@email.com" required>
-      </label>
-      <label>
-        <span>Contraseña</span>
-        <input type="password" name="password" placeholder="Mínimo 8 caracteres" required>
-      </label>
-      <button type="submit" class="button button-primary full-width">Entrar</button>
-    </form>
+    <div class="auth-gate-choices">
+      {% set google_provider = namespace(item=None) %}
+      {% for provider in oauth_providers %}
+        {% if provider.key == "google" %}
+          {% set google_provider.item = provider %}
+        {% endif %}
+      {% endfor %}
 
-    {% if oauth_providers %}
-      <div class="divider"><span>o continúa con</span></div>
-      <div class="social-grid">
-        {% for provider in oauth_providers %}
-          <a href="/auth/{{ provider.key }}" class="social-button">
-            <span>{{ provider.icon }}</span> {{ provider.label }}
-          </a>
-        {% endfor %}
-      </div>
-    {% endif %}
+      {% if google_provider.item %}
+        <a href="/auth/{{ google_provider.item.key }}" class="button button-primary full-width auth-gate-provider-button">
+          Continuar con {{ google_provider.item.label }}
+        </a>
+        <div class="divider"><span>o entra con tu cuenta</span></div>
+      {% else %}
+        <button type="button" class="button button-primary full-width auth-gate-provider-button" disabled aria-disabled="true">
+          Continuar con Google
+        </button>
+        <p class="small-note">El acceso con Google todavía no está configurado en este servidor.</p>
+      {% endif %}
 
+      <form action="/login" method="post" class="form-stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>
+          <span>Email</span>
+          <input type="email" name="email" placeholder="tu@email.com" required>
+        </label>
+        <label>
+          <span>Contraseña</span>
+          <input type="password" name="password" placeholder="Tu contraseña" required>
+        </label>
+        <button type="submit" class="button button-ghost full-width">Entrar con email y contraseña</button>
+      </form>
+    </div>
+
+    <p class="small-note"><a href="/forgot-password">He olvidado mi contraseña</a></p>
     <p class="small-note">¿No tienes cuenta? <a href="/signup">Crear cuenta</a></p>
   </article>
 </section>

@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="section-head compact">
+  <div>
+    <p class="eyebrow">Administración</p>
+    <h1>Usuarios</h1>
+  </div>
+  <div class="hero-actions">
+    <a href="/admin" class="button button-ghost">Volver a utilidades</a>
+  </div>
+</section>
+
+<section class="card admin-users-card">
+  <form method="get" action="/admin/users" class="admin-users-toolbar">
+    <label class="admin-users-search">
+      <span class="sr-only">Buscar usuarios</span>
+      <input type="search" name="q" value="{{ search_query or '' }}" placeholder="Buscar por nombre o email">
+    </label>
+    <button type="submit" class="button button-primary">Buscar</button>
+    {% if search_query %}
+      <a href="/admin/users" class="button button-ghost">Limpiar</a>
+    {% endif %}
+  </form>
+
+  <div class="admin-users-grid admin-users-grid-head" role="row">
+    <div>Email</div>
+    <div>Nombre</div>
+    <div>Alta</div>
+    <div>Último login</div>
+    <div>Demandas</div>
+    <div>Ofertas</div>
+    <div>Superadmin</div>
+    <div>Activa</div>
+    <div>Eliminar</div>
+  </div>
+
+  <div class="admin-users-rows">
+    {% for user in users %}
+      <div class="admin-users-grid admin-users-grid-row">
+        <div class="admin-users-cell admin-users-email">
+          <a href="/admin/view-as?user_id={{ user.id }}&next=%2F" class="admin-user-link"><strong>{{ user.email }}</strong></a>
+        </div>
+        <div class="admin-users-cell">
+          <a href="/admin/view-as?user_id={{ user.id }}&next=%2F" class="admin-user-link">{{ user.full_name }}</a>
+        </div>
+        <div class="admin-users-cell">
+          {{ user.created_at.strftime("%d/%m/%Y %H:%M") if user.created_at else "—" }}
+        </div>
+        <div class="admin-users-cell">
+          {{ user.last_login_at.strftime("%d/%m/%Y %H:%M") if user.last_login_at else "Nunca" }}
+        </div>
+        <div class="admin-users-cell">
+          {% if user.demand_count %}
+            <a href="/admin/view-as?user_id={{ user.id }}&next=%2Fapp%2Fchats%3Frole%3Downer" class="admin-count-link">{{ user.demand_count }}</a>
+          {% else %}
+            <span class="muted">0</span>
+          {% endif %}
+        </div>
+        <div class="admin-users-cell">
+          {% if user.offer_count %}
+            <a href="/admin/view-as?user_id={{ user.id }}&next=%2Fapp%2Fchats%3Frole%3Dsupplier" class="admin-count-link">{{ user.offer_count }}</a>
+          {% else %}
+            <span class="muted">0</span>
+          {% endif %}
+        </div>
+        <div class="admin-users-cell">
+          <form action="/admin/users/{{ user.id }}/toggle-role" method="post" class="admin-inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="q" value="{{ search_query or '' }}">
+            <input type="hidden" name="role" value="{{ 'user' if user.role == 'superadmin' else 'superadmin' }}">
+            <label class="admin-inline-check">
+              <input type="checkbox" {% if user.role == 'superadmin' %}checked{% endif %} data-admin-autosubmit>
+            </label>
+          </form>
+        </div>
+        <div class="admin-users-cell">
+          <form action="/admin/users/{{ user.id }}/toggle-active" method="post" class="admin-inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="q" value="{{ search_query or '' }}">
+            <input type="hidden" name="action" value="{{ 'deactivate' if user.is_active else 'activate' }}">
+            <label class="admin-inline-check">
+              <input type="checkbox" {% if user.is_active %}checked{% endif %} data-admin-autosubmit>
+            </label>
+          </form>
+        </div>
+        <div class="admin-users-cell">
+          {% if user.role == 'superadmin' %}
+            <span class="small-note">—</span>
+          {% else %}
+            <form action="/admin/users/{{ user.id }}/delete" method="post" class="admin-inline-form" data-admin-delete-form>
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="q" value="{{ search_query or '' }}">
+              <button type="submit" class="button button-danger button-small" data-admin-delete-button>Eliminar</button>
+            </form>
+          {% endif %}
+        </div>
+      </div>
+    {% else %}
+      <article class="empty-state">
+        <h3>No hay usuarios que coincidan con la búsqueda.</h3>
+      </article>
+    {% endfor %}
+  </div>
+</section>
+
+<script>
+  (() => {
+    document.querySelectorAll('[data-admin-autosubmit]').forEach((input) => {
+      input.addEventListener('change', () => {
+        input.form?.submit();
+      });
+    });
+
+    document.querySelectorAll('[data-admin-delete-button]').forEach((button) => {
+      button.addEventListener('click', (event) => {
+        const confirmed = window.confirm('¿Seguro que quieres borrar definitivamente este usuario?');
+        if (!confirmed) {
+          event.preventDefault();
+        }
+      });
+    });
+  })();
+</script>
+{% endblock %}

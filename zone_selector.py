@@ -82,21 +82,19 @@ def normalize_zone_payload(payload: Any) -> Optional[dict[str, Any]]:
         option = RADIUS_BY_VALUE["10"]
 
     if raw_mode == "area" and ((isinstance(geojson, dict) and geojson) or normalized_bbox or (lat is not None and lon is not None)):
-        return {
-            "mode": "area",
-            "label": label,
-            "center": {
-                "lat": round(lat, 6) if lat is not None else None,
-                "lon": round(lon, 6) if lon is not None else None,
-            },
-            "radius_km": option["radius_km"],
-            "radius_bucket": option["radius_bucket"],
-            "source": source,
-            "raw_query": raw_query,
-            "admin_level": admin_level,
-            "bbox": normalized_bbox,
-            "geojson": geojson if isinstance(geojson, dict) else None,
-        }
+        option = _approximate_area_radius_option(
+            {
+                "mode": "area",
+                "center": {
+                    "lat": round(lat, 6) if lat is not None else None,
+                    "lon": round(lon, 6) if lon is not None else None,
+                },
+                "radius_km": option["radius_km"],
+                "radius_bucket": option["radius_bucket"],
+                "bbox": normalized_bbox,
+                "geojson": geojson if isinstance(geojson, dict) else None,
+            }
+        )
 
     if lat is None or lon is None:
         return None
@@ -110,8 +108,8 @@ def normalize_zone_payload(payload: Any) -> Optional[dict[str, Any]]:
         "source": source,
         "raw_query": raw_query,
         "admin_level": admin_level,
-        "bbox": normalized_bbox,
-        "geojson": geojson if isinstance(geojson, dict) else None,
+        "bbox": None,
+        "geojson": None,
     }
 
 
@@ -214,9 +212,14 @@ def zone_to_storage_fields(payload: Optional[dict[str, Any]]) -> dict[str, Any]:
         "location_source": payload.get("source"),
         "location_raw_query": payload.get("raw_query"),
         "location_admin_level": payload.get("admin_level"),
-        "location_bbox": payload.get("bbox") or [],
-        "location_geojson": payload.get("geojson") or {},
-        "location_json": payload,
+        "location_bbox": [],
+        "location_geojson": {},
+        "location_json": {
+            **payload,
+            "mode": "radius_from_point",
+            "bbox": None,
+            "geojson": None,
+        },
     }
 
 

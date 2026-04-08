@@ -10,22 +10,29 @@
       <span class="pill soft">Paso {% if wizard_step == "text" %}1{% elif wizard_step == "questions" %}2{% else %}3{% endif %} de 3</span>
       <span class="small-note">{% if wizard_step == "text" %}Texto libre{% elif wizard_step == "questions" %}Detalles guiados{% else %}{% if is_auth_gate %}Publicación y acceso{% else %}Demanda publicada{% endif %}{% endif %}</span>
     </div>
-    <h1>
-      {% if is_auth_gate %}
-        Tu demanda está lista para publicarse
-      {% elif is_published_step %}
-        Enhorabuena! Demanda Publicada
-      {% elif wizard_step == "questions" %}
-        Detalles adicionales
-      {% else %}
-        {{ page_title or "Publica una demanda" }}
-      {% endif %}
-    </h1>
+    {% if wizard_step == "questions" and debug_normalization and active_wizard.intent_domain and active_wizard.intent_type %}
+      <button type="button" class="wizard-section-toggle" data-debug-panel-toggle aria-expanded="false">
+        <span class="wizard-section-toggle-icon" aria-hidden="true">▸</span>
+        <span>Detalles adicionales</span>
+      </button>
+    {% else %}
+      <h1>
+        {% if is_auth_gate %}
+          Tu demanda está lista para publicarse
+        {% elif is_published_step %}
+          Enhorabuena! Demanda Publicada
+        {% elif wizard_step == "questions" %}
+          Detalles adicionales
+        {% else %}
+          {{ page_title or "Publica una demanda" }}
+        {% endif %}
+      </h1>
+    {% endif %}
     {% if is_auth_gate %}
       <p class="muted">Tu demanda ya está estructurada. Solo falta crear tu cuenta o iniciar sesión para publicarla y empezar a recibir respuestas.</p>
     {% elif is_published_step %}
       <p class="muted">{{ active_wizard.published_message or "Prepárate para recibir propuestas de personas y empresas interesadas." }}</p>
-    {% elif page_note %}
+    {% elif wizard_step != "questions" and page_note %}
       <p class="muted">{{ page_note }}</p>
     {% endif %}
 
@@ -56,7 +63,7 @@
 
     {% elif wizard_step == "questions" %}
       {% if debug_normalization and active_wizard.intent_domain and active_wizard.intent_type %}
-        <section class="debug-inferred-panel">
+        <section class="debug-inferred-panel" data-debug-panel hidden>
           <div class="debug-inferred-head">
             <span class="detail-label">Esquema inferido</span>
             <div class="debug-inferred-actions">
@@ -206,7 +213,10 @@
 
         {% if optional_fields %}
           <details class="demand-disclosure questionnaire-group">
-            <summary class="questionnaire-optional-toggle">Rellenar más detalles opcionales de la demanda</summary>
+            <summary class="questionnaire-optional-toggle">
+              <span class="questionnaire-optional-toggle-icon" aria-hidden="true">▸</span>
+              <span>Rellenar más detalles opcionales de la demanda</span>
+            </summary>
             <div class="wizard-block">
               <span class="detail-label">Datos opcionales</span>
               <p class="muted compact">Estas respuestas no son obligatorias, pero pueden ayudar a recibir propuestas más afinadas.</p>
@@ -310,26 +320,56 @@
         <div class="signup-gate-grid">
           <section class="auth-gate-panel">
             <span class="detail-label">Crear cuenta y publicar</span>
-            <form action="/signup" method="post" class="form-stack">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              <label>
-                <span>Nombre completo</span>
-                <input type="text" name="full_name" placeholder="Tu nombre" required>
-              </label>
-              <label>
-                <span>Email</span>
-                <input type="email" name="email" placeholder="tu@email.com" required>
-              </label>
-              <label>
-                <span>Contraseña</span>
-                <input type="password" name="password" placeholder="Mínimo 8 caracteres" required>
-              </label>
-              <label>
-                <span>Repite la contraseña</span>
-                <input type="password" name="password_confirm" placeholder="Repite tu contraseña" required>
-              </label>
-              <button type="submit" class="button button-primary full-width">Crear cuenta y publicar</button>
-            </form>
+            <div class="auth-gate-choices" data-auth-gate-root>
+              {% set google_provider = namespace(item=None) %}
+              {% for provider in oauth_providers %}
+                {% if provider.key == "google" %}
+                  {% set google_provider.item = provider %}
+                {% endif %}
+              {% endfor %}
+
+              {% if google_provider.item %}
+                <a href="/auth/{{ google_provider.item.key }}" class="button button-primary full-width auth-gate-provider-button">
+                  Continuar con {{ google_provider.item.label }}
+                </a>
+              {% endif %}
+
+              <button
+                type="button"
+                class="button button-ghost full-width"
+                data-auth-gate-email-toggle
+                aria-expanded="{{ 'false' if google_provider.item else 'true' }}"
+              >
+                Dar de alta con email y contraseña
+              </button>
+
+              <form
+                action="/signup"
+                method="post"
+                class="form-stack auth-gate-email-form"
+                data-auth-gate-email-form
+                {% if google_provider.item %}hidden{% endif %}
+              >
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <label>
+                  <span>Nombre completo</span>
+                  <input type="text" name="full_name" placeholder="Tu nombre" {% if not google_provider.item %}required{% endif %}>
+                </label>
+                <label>
+                  <span>Email</span>
+                  <input type="email" name="email" placeholder="tu@email.com" {% if not google_provider.item %}required{% endif %}>
+                </label>
+                <label>
+                  <span>Contraseña</span>
+                  <input type="password" name="password" placeholder="Mínimo 8 caracteres" {% if not google_provider.item %}required{% endif %}>
+                </label>
+                <label>
+                  <span>Repite la contraseña</span>
+                  <input type="password" name="password_confirm" placeholder="Repite tu contraseña" {% if not google_provider.item %}required{% endif %}>
+                </label>
+                <button type="submit" class="button button-primary full-width">Crear cuenta y publicar</button>
+              </form>
+            </div>
           </section>
 
           <section class="auth-gate-panel auth-gate-panel-secondary">
@@ -359,6 +399,30 @@
 </section>
 
 <script>
+  (() => {
+    const root = document.querySelector('[data-auth-gate-root]');
+    if (!root) return;
+    const toggle = root.querySelector('[data-auth-gate-email-toggle]');
+    const form = root.querySelector('[data-auth-gate-email-form]');
+    if (!toggle || !form) return;
+    const updateRequired = (visible) => {
+      form.querySelectorAll('input').forEach((input) => {
+        if (input.type === 'hidden') return;
+        input.required = visible;
+      });
+    };
+    updateRequired(!form.hidden);
+    toggle.addEventListener('click', () => {
+      const willShow = form.hidden;
+      form.hidden = !willShow;
+      toggle.setAttribute('aria-expanded', willShow ? 'true' : 'false');
+      updateRequired(willShow);
+      if (willShow) {
+        form.querySelector('input:not([type="hidden"])')?.focus();
+      }
+    });
+  })();
+
   function nextDayIso(isoDate) {
     const parts = String(isoDate || '').split('-');
     if (parts.length !== 3) return '';
@@ -483,6 +547,18 @@
     form.addEventListener('change', () => syncDependentCheckoutDates(form));
     form.addEventListener('input', () => syncConditionalRequiredFields(form));
     form.addEventListener('change', () => syncConditionalRequiredFields(form));
+  });
+
+  document.querySelectorAll('[data-debug-panel-toggle]').forEach((button) => {
+    const panel = document.querySelector('[data-debug-panel]');
+    if (!panel) return;
+    button.addEventListener('click', () => {
+      const willOpen = panel.hidden;
+      panel.hidden = !willOpen;
+      button.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+      const icon = button.querySelector('.wizard-section-toggle-icon');
+      if (icon) icon.textContent = willOpen ? '▾' : '▸';
+    });
   });
 </script>
 {% endblock %}

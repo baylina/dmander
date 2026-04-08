@@ -45,6 +45,12 @@
               </div>
               <a class="menu-action" href="/app/chats">Mis chats</a>
               <a class="menu-action" href="/app/filters">Mis filtros</a>
+              {% if not admin_view_active %}
+                <a class="menu-action" href="/account/security">Seguridad</a>
+              {% endif %}
+              {% if actor_user and actor_user.role == "superadmin" %}
+                <a class="menu-action" href="/admin">Administración</a>
+              {% endif %}
               <form action="/logout" method="post">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button class="menu-action" type="submit">Cerrar sesión</button>
@@ -57,6 +63,28 @@
         {% endif %}
       </div>
     </header>
+
+    {% if admin_view_active and admin_view_target %}
+      {% set admin_view_next = request.url.path ~ ('?' ~ request.url.query if request.url.query else '') %}
+      <section class="admin-view-bar">
+        <div class="admin-view-copy">
+          <strong>Modo solo lectura</strong>
+          <span>Estás viendo la aplicación como {{ admin_view_target.full_name }} ({{ admin_view_target.email }}).</span>
+        </div>
+        <form action="/admin/view-as" method="get" class="admin-view-switcher">
+          <input type="hidden" name="next" value="{{ admin_view_next }}">
+          <select name="user_id" onchange="this.form.submit()">
+            <option value="{{ actor_user.id if actor_user else '' }}">Volver a mi cuenta</option>
+            {% for item in admin_view_users %}
+              <option value="{{ item.id }}" {% if admin_view_target and item.id == admin_view_target.id %}selected{% endif %}>
+                {{ item.full_name }} · {{ item.email }}
+              </option>
+            {% endfor %}
+          </select>
+          <a href="/admin/view-as?next={{ admin_view_next | urlencode }}" class="button button-ghost">Salir de esta vista</a>
+        </form>
+      </section>
+    {% endif %}
 
     {% if flash_messages %}
       <section class="flash-stack">
@@ -87,7 +115,7 @@
     </div>
   {% endif %}
 
-  {% if current_user %}
+  {% if current_user and not admin_view_active %}
     <div class="live-toast" id="live-toast" hidden>
       <strong>Nueva respuesta</strong>
       <span id="live-toast-text"></span>
@@ -144,30 +172,54 @@
           }, 5500);
         };
 
+        const applyNotificationPayload = (data) => {
+          applyBadge(badgeTotal, (data.my_demands_unread || 0) + (data.my_offers_unread || 0));
+
+          if (toast && firstRun) {
+            toast.hidden = true;
+          }
+
+          const currentSignatures = new Set((data.items || []).map((item) => item.signature));
+          if (!firstRun) {
+            const newest = (data.items || []).find((item) => !knownSignatures.has(item.signature));
+            if (newest) showToast(newest);
+          }
+          knownSignatures = currentSignatures;
+          firstRun = false;
+        };
+
         const poll = async () => {
           try {
             const response = await fetch('/api/notifications', { headers: { 'Accept': 'application/json' }});
             if (!response.ok) return;
             const data = await response.json();
-            applyBadge(badgeTotal, (data.my_demands_unread || 0) + (data.my_offers_unread || 0));
-
-            if (toast && firstRun) {
-              toast.hidden = true;
-            }
-
-            const currentSignatures = new Set((data.items || []).map((item) => item.signature));
-            if (!firstRun) {
-              const newest = (data.items || []).find((item) => !knownSignatures.has(item.signature));
-              if (newest) showToast(newest);
-            }
-            knownSignatures = currentSignatures;
-            firstRun = false;
+            applyNotificationPayload(data);
           } catch (_) {
           }
         };
 
-        poll();
-        window.setInterval(poll, 8000);
+        if ('EventSource' in window) {
+          const source = new EventSource('/api/notifications/stream');
+          let fallbackTimer = null;
+
+          source.addEventListener('notifications', (event) => {
+            try {
+              const data = JSON.parse(event.data);
+              applyNotificationPayload(data);
+            } catch (_) {
+            }
+          });
+
+          source.addEventListener('error', () => {
+            source.close();
+            if (fallbackTimer) return;
+            poll();
+            fallbackTimer = window.setInterval(poll, 12000);
+          });
+        } else {
+          poll();
+          window.setInterval(poll, 8000);
+        }
       })();
     </script>
   {% endif %}

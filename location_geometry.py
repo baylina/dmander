@@ -27,8 +27,6 @@ def radius_limit_km(radius_km: Any, radius_bucket: Any) -> float:
 def zone_has_geometry(payload: dict[str, Any] | None) -> bool:
     if not isinstance(payload, dict):
         return False
-    if payload.get("geojson"):
-        return True
     center = payload.get("center") or {}
     return center.get("lat") is not None and center.get("lon") is not None
 
@@ -36,17 +34,6 @@ def zone_has_geometry(payload: dict[str, Any] | None) -> bool:
 def zone_bbox(payload: dict[str, Any] | None) -> list[float] | None:
     if not isinstance(payload, dict):
         return None
-    geojson = payload.get("geojson")
-    if isinstance(geojson, dict):
-        bbox = bbox_from_geojson(geojson)
-        if bbox:
-            return bbox
-    bbox = payload.get("bbox")
-    if isinstance(bbox, list) and len(bbox) == 4:
-        try:
-            return [float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])]
-        except (TypeError, ValueError):
-            return None
     center = payload.get("center") or {}
     try:
         lat = float(center.get("lat"))
@@ -66,30 +53,6 @@ def zones_intersect(left: dict[str, Any] | None, right: dict[str, Any] | None) -
     right_bbox = zone_bbox(right)
     if left_bbox and right_bbox and not bbox_intersects(left_bbox, right_bbox):
         return False
-
-    left_geojson = left.get("geojson")
-    right_geojson = right.get("geojson")
-    left_has_area = isinstance(left_geojson, dict) and bool(_iter_polygons(left_geojson))
-    right_has_area = isinstance(right_geojson, dict) and bool(_iter_polygons(right_geojson))
-
-    if left_has_area and right_has_area:
-        return geojsons_intersect(left_geojson, right_geojson)
-    if left_has_area:
-        center = _zone_center(right)
-        if not center:
-            return bool(left_bbox and right_bbox and bbox_intersects(left_bbox, right_bbox))
-        radius = radius_limit_km(right.get("radius_km"), right.get("radius_bucket"))
-        if radius <= 0:
-            return point_in_geojson(center[1], center[0], left_geojson)
-        return circle_intersects_geojson(center[1], center[0], radius, left_geojson)
-    if right_has_area:
-        center = _zone_center(left)
-        if not center:
-            return bool(left_bbox and right_bbox and bbox_intersects(left_bbox, right_bbox))
-        radius = radius_limit_km(left.get("radius_km"), left.get("radius_bucket"))
-        if radius <= 0:
-            return point_in_geojson(center[1], center[0], right_geojson)
-        return circle_intersects_geojson(center[1], center[0], radius, right_geojson)
 
     left_center = _zone_center(left)
     right_center = _zone_center(right)

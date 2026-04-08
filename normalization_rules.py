@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+import re
 from typing import Any, Optional
 
 from field_normalizers import ValidationIssue
@@ -9,6 +10,21 @@ from master_schema import MasterSchemaRegistry
 
 
 INTENT_ALIAS_RULES = [
+    {
+        "keywords": [
+            "canguro",
+            "niñera",
+            "ninyera",
+            "babysitter",
+            "cuidado infantil",
+            "cuidar a mis hijos",
+            "cuidar mis hijos",
+            "cuidado de niños",
+            "cuidado de ninos",
+        ],
+        "intent_type": "babysitting",
+        "force": True,
+    },
     {
         "keywords": ["camping", "bungalow en camping", "camping familiar"],
         "intent_type": "hotel_booking",
@@ -320,6 +336,107 @@ FIELD_LABELS = {
     "insurance_type": "tipo de seguro",
 }
 
+FIELD_TOKEN_TRANSLATIONS_ES = {
+    "age": "edad",
+    "area": "zona",
+    "board": "regimen",
+    "brand": "marca",
+    "budget": "presupuesto",
+    "checkin": "entrada",
+    "checkout": "salida",
+    "city": "ciudad",
+    "country": "pais",
+    "current": "actual",
+    "date": "fecha",
+    "dates": "fechas",
+    "deadline": "plazo",
+    "destination": "destino",
+    "education": "educacion",
+    "exam": "examen",
+    "fault": "averia",
+    "frequency": "frecuencia",
+    "goal": "objetivo",
+    "insurance": "seguro",
+    "job": "trabajo",
+    "language": "idioma",
+    "level": "nivel",
+    "location": "ubicacion",
+    "max": "maximo",
+    "min": "minimo",
+    "mode": "modo",
+    "model": "modelo",
+    "modality": "modalidad",
+    "people": "personas",
+    "problem": "problema",
+    "product": "producto",
+    "property": "inmueble",
+    "role": "puesto",
+    "rooms": "habitaciones",
+    "search": "busqueda",
+    "seniority": "experiencia",
+    "service": "servicio",
+    "size": "talla",
+    "stack": "tecnologias",
+    "stars": "estrellas",
+    "student": "estudiante",
+    "style": "estilo",
+    "subject": "materia",
+    "subjects": "asignaturas",
+    "target": "objetivo",
+    "type": "tipo",
+    "urgency": "urgencia",
+    "value": "valor",
+    "vehicle": "vehiculo",
+}
+
+FIELD_TOKEN_TRANSLATIONS_CA = {
+    "age": "edat",
+    "area": "zona",
+    "board": "regim",
+    "brand": "marca",
+    "budget": "pressupost",
+    "checkin": "entrada",
+    "checkout": "sortida",
+    "city": "ciutat",
+    "country": "pais",
+    "current": "actual",
+    "date": "data",
+    "dates": "dates",
+    "deadline": "termini",
+    "destination": "destinacio",
+    "exam": "examen",
+    "fault": "avaria",
+    "frequency": "frequencia",
+    "goal": "objectiu",
+    "insurance": "asseguranca",
+    "job": "feina",
+    "language": "idioma",
+    "level": "nivell",
+    "location": "ubicacio",
+    "max": "maxim",
+    "min": "minim",
+    "mode": "mode",
+    "model": "model",
+    "modality": "modalitat",
+    "people": "persones",
+    "problem": "problema",
+    "product": "producte",
+    "property": "immoble",
+    "role": "rol",
+    "rooms": "habitacions",
+    "search": "cerca",
+    "service": "servei",
+    "size": "talla",
+    "stars": "estrelles",
+    "student": "estudiant",
+    "style": "estil",
+    "subject": "materia",
+    "subjects": "assignatures",
+    "target": "objectiu",
+    "type": "tipus",
+    "urgency": "urgencia",
+}
+
 CITY_TO_COUNTRY = {
     "madrid": "spain",
     "barcelona": "spain",
@@ -377,9 +494,16 @@ TRAVEL_LIKE_INTENTS = {"hotel_booking", "tourist_apartment", "rural_house", "hol
 
 def resolve_alias_intent_type(raw_text: str, current_intent_type: str, registry: MasterSchemaRegistry) -> str:
     lowered = raw_text.lower()
+    for rule in INTENT_ALIAS_RULES:
+        if not rule.get("force"):
+            continue
+        if any(keyword in lowered for keyword in rule["keywords"]):
+            return rule["intent_type"]
     if registry.has_intent_type(current_intent_type) and current_intent_type != registry.fallback_schema.intent_type:
         return current_intent_type
     for rule in INTENT_ALIAS_RULES:
+        if rule.get("force"):
+            continue
         if any(keyword in lowered for keyword in rule["keywords"]):
             return rule["intent_type"]
     return current_intent_type
@@ -546,43 +670,126 @@ def _looks_like_technical_label(value: str) -> bool:
     return False
 
 
-def _humanize_field_name(field_name: str, field_description: str = "") -> str:
+def _description_looks_foreign_for_language(description: str, language: str) -> bool:
+    lowered = _normalize_key(description)
+    if not lowered:
+        return False
+    tokens = [token for token in lowered.replace("/", " ").replace("-", " ").split() if token]
+    if not tokens:
+        return False
+    english_markers = {
+        "age", "board", "brand", "budget", "checkin", "checkout", "city", "country",
+        "current", "date", "dates", "deadline", "destination", "exam", "fault",
+        "frequency", "goal", "insurance", "job", "language", "level", "location",
+        "max", "min", "mode", "model", "modality", "people", "problem", "product",
+        "property", "role", "rooms", "search", "seniority", "service", "size",
+        "stack", "stars", "student", "style", "subject", "subjects", "target", "type",
+        "urgency", "value", "vehicle",
+    }
+    if language == "es":
+        return any(token in english_markers for token in tokens)
+    if language == "ca":
+        return any(token in english_markers for token in tokens)
+    return False
+
+
+def _translated_field_name_from_tokens(field_name: str, language: str) -> str:
+    normalized = str(field_name or "").strip().lower()
+    if not normalized:
+        return ""
+    parts = [part for part in normalized.split("_") if part]
+    if not parts:
+        return normalized
+    if language == "es":
+        mapping = FIELD_TOKEN_TRANSLATIONS_ES
+    elif language == "ca":
+        mapping = FIELD_TOKEN_TRANSLATIONS_CA
+    else:
+        return normalized.replace("_", " ").strip()
+    translated = [mapping.get(part, part) for part in parts]
+    return " ".join(translated).strip()
+
+
+def _humanize_field_name(field_name: str, field_description: str = "", language: str = "es") -> str:
     normalized = str(field_name or "").strip()
     explicit = FIELD_LABELS.get(normalized, FIELD_LABELS.get(normalized.lower()))
     if explicit:
         return explicit
     description = str(field_description or "").strip()
-    if description and not _looks_like_technical_label(description):
+    if (
+        description
+        and not _looks_like_technical_label(description)
+        and not _description_looks_foreign_for_language(description, language)
+    ):
         return description
-    return normalized.replace("_", " ").strip()
+    translated = _translated_field_name_from_tokens(normalized, language)
+    return translated or normalized.replace("_", " ").strip()
 
 
 def _detect_prompt_language(raw_text: str) -> str:
-    lowered = _normalize_key(raw_text or "")
+    original = str(raw_text or "").strip()
+    lowered = _normalize_key(original)
     if not lowered:
         return "es"
+
+    if any(char in original for char in ("¿", "¡", "ñ", "Ñ")):
+        return "es"
+
     padded = f" {lowered} "
-    english_hits = sum(
-        token in padded
-        for token in (" i need ", " i want ", " looking for ", " want to buy ", " for my ", " near me ", " lessons ", " private lessons ")
+
+    english_phrases = (
+        " i need ", " i want ", " looking for ", " want to buy ", " for my ", " near me ",
+        " private lessons ", " i am looking for ", " can you help me ", " i need a ",
     )
-    catalan_hits = sum(
-        token in padded
-        for token in (" vull ", " necessito ", " busco ", " classes ", " professor ", " professora ", " ciutat ", " zona ", " a prop ")
+    catalan_phrases = (
+        " vull ", " necessito ", " busco ", " classes ", " professor ", " professora ",
+        " ciutat ", " zona ", " a prop ", " per al meu ", " per a la meva ",
     )
-    spanish_hits = sum(
-        token in padded
-        for token in (" quiero ", " necesito ", " busco ", " clases ", " profesor ", " profesora ", " ciudad ", " zona ", " cerca de ")
+    spanish_phrases = (
+        " quiero ", " necesito ", " busco ", " clases ", " profesor ", " profesora ",
+        " ciudad ", " zona ", " cerca de ", " para mi ", " para mi hijo ", " para mi hija ",
+        " para un ", " para una ",
     )
-    if english_hits > max(catalan_hits, spanish_hits):
-        return "en"
-    if catalan_hits > spanish_hits:
+
+    english_hits = sum(token in padded for token in english_phrases)
+    catalan_hits = sum(token in padded for token in catalan_phrases)
+    spanish_hits = sum(token in padded for token in spanish_phrases)
+
+    english_words = {
+        "need", "want", "looking", "lessons", "private", "teacher", "buy", "search",
+        "find", "repair", "insurance", "hotel", "booking", "home", "car", "health",
+        "with", "for", "near", "from", "small", "used",
+    }
+    catalan_words = {
+        "vull", "necessito", "classes", "professor", "professora", "ciutat", "cerca",
+        "zona", "cotxe", "llogar", "buscar", "pis", "asseguranca", "salut",
+    }
+    spanish_words = {
+        "quiero", "necesito", "busco", "clases", "profesor", "profesora", "ciudad",
+        "zona", "coche", "seguro", "salud", "hogar", "para", "con", "en", "cerca",
+        "comprar", "alquilar", "piso",
+    }
+
+    word_tokens = [token for token in re.findall(r"[a-zA-ZÀ-ÿ']+", lowered) if token]
+    english_word_hits = sum(token in english_words for token in word_tokens)
+    catalan_word_hits = sum(token in catalan_words for token in word_tokens)
+    spanish_word_hits = sum(token in spanish_words for token in word_tokens)
+
+    english_score = english_hits * 3 + english_word_hits
+    catalan_score = catalan_hits * 3 + catalan_word_hits
+    spanish_score = spanish_hits * 3 + spanish_word_hits
+
+    if spanish_score >= max(english_score, catalan_score):
+        return "es"
+    if catalan_score >= max(english_score, spanish_score) and catalan_score >= 2:
         return "ca"
+    if english_score >= max(spanish_score, catalan_score) and english_score >= 3:
+        return "en"
     return "es"
 
 
 def _default_prompt_for_field(field_name: str, language: str = "es", field_description: str = "") -> dict[str, Any]:
-    label = _humanize_field_name(field_name, field_description=field_description)
+    label = _humanize_field_name(field_name, field_description=field_description, language=language)
     lowered = field_name.lower()
     if language == "en":
         if lowered.startswith("budget_"):

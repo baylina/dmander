@@ -159,6 +159,21 @@ class UserProfile(BaseModel):
     password_hash: Optional[str] = None
     avatar_url: Optional[str] = None
     auth_source: str = "local"
+    role: str = "user"
+    is_active: bool = True
+    last_login_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
+class APITokenInfo(BaseModel):
+    """Token de API asociado a un usuario."""
+
+    id: int
+    user_id: int
+    name: str
+    token_prefix: str
+    last_used_at: Optional[datetime] = None
+    revoked_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
 
 

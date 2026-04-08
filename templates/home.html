@@ -141,27 +141,34 @@
             <div class="category-modal-head">
               <div>
                 <strong>Filtrar por categorías</strong>
-                <p class="small-note">Primero elige uno o varios dominios y, si quieres afinar, selecciona tipos concretos dentro de ellos.</p>
+                <p class="small-note">Despliega los dominios y selecciona uno o varios tipos concretos dentro de ellos.</p>
               </div>
               <button type="button" class="category-modal-close" data-category-close>Cerrar</button>
             </div>
 
             <div class="category-modal-body">
-              <div class="category-picker">
-                <div class="category-picker-column">
-                  <div class="category-picker-label">Dominios</div>
-                  <select class="category-picker-select" data-category-domain-list multiple size="12">
-                    {% for domain in category_catalog %}
-                      <option value="{{ domain.code }}">{{ domain.name }}</option>
-                    {% endfor %}
-                  </select>
-                  <p class="small-note">Selecciona uno o varios dominios. Usa `Cmd` para marcar varios en macOS.</p>
-                </div>
-                <div class="category-picker-column">
-                  <div class="category-picker-label">Tipos concretos</div>
-                  <select class="category-picker-select" data-category-type-list multiple size="14"></select>
-                  <p class="small-note">Opcional. Si eliges tipos, el filtro será más preciso.</p>
-                </div>
+              <div class="category-browser" data-category-tree>
+                {% for domain in category_catalog %}
+                  <section class="category-browser-group" data-domain-group="{{ domain.code }}">
+                    <div class="category-browser-row">
+                      <button type="button" class="category-browser-toggle" data-category-toggle="{{ domain.code }}" aria-expanded="false" aria-controls="category-children-{{ loop.index }}">
+                        <span aria-hidden="true">▸</span>
+                      </button>
+                      <div class="category-browser-main">
+                        <button type="button" class="category-browser-name" data-category-domain-title="{{ domain.code }}">{{ domain.name }}</button>
+                      </div>
+                    </div>
+                    <div class="category-browser-children" id="category-children-{{ loop.index }}" hidden>
+                      {% for intent in domain.intent_types %}
+                        <div class="category-browser-child">
+                          <span class="category-browser-indent" aria-hidden="true"></span>
+                          <input type="checkbox" value="{{ intent.intent_type }}" data-category-type-checkbox data-parent-domain="{{ domain.code }}">
+                          <button type="button" class="category-browser-child-name" data-category-type-title="{{ intent.intent_type }}">{{ intent.display_name }}</button>
+                        </div>
+                      {% endfor %}
+                    </div>
+                  </section>
+                {% endfor %}
               </div>
             </div>
 
@@ -567,9 +574,12 @@
       const summary = root.querySelector('[data-category-summary]');
       const domainsInput = root.querySelector('[data-category-domains-input]');
       const typesInput = root.querySelector('[data-category-types-input]');
-      const domainSelect = root.querySelector('[data-category-domain-list]');
-      const typeSelect = root.querySelector('[data-category-type-list]');
-      if (!modal || !domainsInput || !typesInput || !summary || !domainSelect || !typeSelect) return;
+      const tree = root.querySelector('[data-category-tree]');
+      const typeCheckboxes = [...root.querySelectorAll('[data-category-type-checkbox]')];
+      const toggleButtons = [...root.querySelectorAll('[data-category-toggle]')];
+      const domainTitleButtons = [...root.querySelectorAll('[data-category-domain-title]')];
+      const typeTitleButtons = [...root.querySelectorAll('[data-category-type-title]')];
+      if (!modal || !domainsInput || !typesInput || !summary || !tree || !typeCheckboxes.length) return;
 
       let appliedDomains = [];
       let appliedTypes = [];
@@ -586,6 +596,9 @@
       };
 
       const uniq = (items) => [...new Set(items.filter(Boolean))];
+      const computeDomainsFromTypes = (types) => uniq(
+        types.map((intentType) => typeMeta(intentType)?.domain_code).filter(Boolean)
+      );
       const domainName = (code) => categoryCatalog.find((item) => item.code === code)?.name || code;
       const typeMeta = (intentType) => {
         for (const domain of categoryCatalog) {
@@ -610,44 +623,25 @@
         return `${domains.length} dominios`;
       };
 
-      const selectedValues = (select) => [...select.selectedOptions].map((option) => option.value);
-
-      const renderTypeOptions = () => {
-        const selectedDomains = selectedValues(domainSelect);
-        const keepTypes = new Set(workingTypes);
-        const selectedDomainSet = new Set(selectedDomains);
-        const visibleTypes = categoryCatalog
-          .filter((domain) => !selectedDomains.length || selectedDomainSet.has(domain.code))
-          .flatMap((domain) => (domain.intent_types || []).map((item) => ({
-            value: item.intent_type,
-            label: `${domain.name} / ${item.display_name}`,
-          })));
-
-        typeSelect.innerHTML = '';
-        if (!visibleTypes.length) {
-          const placeholder = document.createElement('option');
-          placeholder.disabled = true;
-          placeholder.textContent = 'Primero selecciona uno o varios dominios';
-          typeSelect.appendChild(placeholder);
-          return;
-        }
-
-        visibleTypes.forEach((item) => {
-          const option = document.createElement('option');
-          option.value = item.value;
-          option.textContent = item.label;
-          option.selected = keepTypes.has(item.value);
-          typeSelect.appendChild(option);
-        });
-      };
-
       const syncControls = () => {
-        [...domainSelect.options].forEach((option) => {
-          option.selected = workingDomains.includes(option.value);
+        categoryCatalog.forEach((domain) => {
+          const domainCode = domain.code;
+          const childTypes = typeCheckboxes.filter((item) => item.dataset.parentDomain === domainCode);
+          const selectedChildren = childTypes.filter((item) => workingTypes.includes(item.value));
+          const group = root.querySelector(`[data-domain-group="${domainCode}"]`);
+          const children = group?.querySelector('.category-browser-children');
+          const toggle = group?.querySelector('[data-category-toggle]');
+          const shouldOpen = selectedChildren.length > 0;
+          if (children) children.hidden = !shouldOpen && !group?.dataset.manuallyOpened;
+          if (toggle) {
+            const expanded = !(children?.hidden);
+            toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+            const icon = toggle.querySelector('span[aria-hidden="true"]');
+            if (icon) icon.textContent = expanded ? '▾' : '▸';
+          }
         });
-        renderTypeOptions();
-        [...typeSelect.options].forEach((option) => {
-          option.selected = workingTypes.includes(option.value);
+        typeCheckboxes.forEach((checkbox) => {
+          checkbox.checked = workingTypes.includes(checkbox.value);
         });
       };
 
@@ -657,6 +651,7 @@
       };
 
       const persistApplied = () => {
+        appliedDomains = computeDomainsFromTypes(appliedTypes);
         domainsInput.value = JSON.stringify(appliedDomains);
         typesInput.value = JSON.stringify(appliedTypes);
         updateSummary();
@@ -680,30 +675,63 @@
         document.body.classList.remove('has-category-modal');
       };
 
-      appliedDomains = uniq(parseList(domainsInput.value));
       appliedTypes = uniq(parseList(typesInput.value));
+      appliedDomains = computeDomainsFromTypes(appliedTypes);
       updateSummary();
 
-      domainSelect.addEventListener('change', () => {
-        workingDomains = uniq(selectedValues(domainSelect));
-        const visibleTypeValues = new Set(
-          categoryCatalog
-            .filter((domain) => workingDomains.includes(domain.code))
-            .flatMap((domain) => (domain.intent_types || []).map((item) => item.intent_type))
-        );
-        workingTypes = workingTypes.filter((intentType) => visibleTypeValues.has(intentType));
-        syncControls();
+      typeCheckboxes.forEach((checkbox) => {
+        checkbox.addEventListener('change', () => {
+          const domainCode = checkbox.dataset.parentDomain;
+          const siblingTypes = typeCheckboxes.filter((item) => item.dataset.parentDomain === domainCode);
+          if (checkbox.checked) {
+            workingTypes = uniq([...workingTypes, checkbox.value]);
+            const allSelected = siblingTypes.every((item) => workingTypes.includes(item.value));
+            if (allSelected) {
+              workingDomains = uniq([...workingDomains, domainCode]);
+            }
+          } else {
+            workingTypes = workingTypes.filter((item) => item !== checkbox.value);
+            workingDomains = workingDomains.filter((item) => item !== domainCode);
+          }
+          workingDomains = computeDomainsFromTypes(workingTypes);
+          syncControls();
+        });
       });
 
-      typeSelect.addEventListener('change', () => {
-        workingTypes = uniq(selectedValues(typeSelect));
-        const requiredDomains = uniq(
-          workingTypes
-            .map((intentType) => typeMeta(intentType)?.domain_code)
-            .filter(Boolean)
-        );
-        workingDomains = uniq([...workingDomains, ...requiredDomains]);
-        syncControls();
+      domainTitleButtons.forEach((button) => {
+        button.addEventListener('click', (event) => {
+          event.preventDefault();
+          const domainCode = button.dataset.categoryDomainTitle;
+          const toggle = toggleButtons.find((item) => item.dataset.categoryToggle === domainCode);
+          toggle?.click();
+        });
+      });
+
+      typeTitleButtons.forEach((button) => {
+        button.addEventListener('click', (event) => {
+          event.preventDefault();
+          const intentType = button.dataset.categoryTypeTitle;
+          const checkbox = typeCheckboxes.find((item) => item.value === intentType);
+          if (!checkbox) return;
+          checkbox.checked = !checkbox.checked;
+          checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      });
+
+      toggleButtons.forEach((button) => {
+        button.addEventListener('click', (event) => {
+          event.preventDefault();
+          const domainCode = button.dataset.categoryToggle;
+          const group = root.querySelector(`[data-domain-group="${domainCode}"]`);
+          const children = group?.querySelector('.category-browser-children');
+          if (!group || !children) return;
+          const willOpen = children.hidden;
+          children.hidden = !willOpen;
+          group.dataset.manuallyOpened = willOpen ? 'true' : '';
+          button.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+          const icon = button.querySelector('span[aria-hidden="true"]');
+          if (icon) icon.textContent = willOpen ? '▾' : '▸';
+        });
       });
 
       openButtons.forEach((button) => {

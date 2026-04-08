@@ -590,8 +590,8 @@ def _normalize_fields(schema, merged_known: dict[str, Any], response: LLMRespons
         normalized_known["location_source"] = zone_payload["source"]
         normalized_known["location_raw_query"] = zone_payload["raw_query"]
         normalized_known["location_admin_level"] = zone_payload.get("admin_level")
-        normalized_known["location_bbox"] = zone_payload.get("bbox") or []
-        normalized_known["location_geojson"] = zone_payload.get("geojson") or {}
+        normalized_known["location_bbox"] = []
+        normalized_known["location_geojson"] = {}
         normalized_known["location_json"] = zone_payload
         normalized_attributes["location_zone"] = zone_payload
         normalized_attributes["location_structured"] = {
@@ -603,8 +603,8 @@ def _normalize_fields(schema, merged_known: dict[str, Any], response: LLMRespons
             "source": zone_payload["source"],
             "raw_query": zone_payload["raw_query"],
             "admin_level": zone_payload.get("admin_level"),
-            "bbox": zone_payload.get("bbox") or [],
-            "geojson": zone_payload.get("geojson") or {},
+            "bbox": [],
+            "geojson": {},
         }
     else:
         location_candidate = first_present(

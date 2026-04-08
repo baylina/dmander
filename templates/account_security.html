@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="section-head">
+  <div>
+    <p class="eyebrow">Cuenta</p>
+    <h1>Seguridad</h1>
+    <p class="small-note">Gestiona tu contraseña y el acceso a tu cuenta.</p>
+  </div>
+</section>
+
+<section class="card-grid account-security-grid">
+  <article class="card panel-card">
+    <div class="list-item">
+      <div>
+        <h2>Cambiar contraseña</h2>
+        <p class="small-note">Para cambiarla desde aquí necesitas introducir primero tu contraseña actual.</p>
+      </div>
+    </div>
+    <form action="/account/password/change" method="post" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>
+        <span>Contraseña actual</span>
+        <input type="password" name="current_password" placeholder="Tu contraseña actual" required>
+      </label>
+      <label>
+        <span>Nueva contraseña</span>
+        <input type="password" name="new_password" placeholder="Mínimo 8 caracteres" required>
+      </label>
+      <label>
+        <span>Confirmar nueva contraseña</span>
+        <input type="password" name="new_password_confirm" placeholder="Repite la nueva contraseña" required>
+      </label>
+      <button type="submit" class="button button-primary">Actualizar contraseña</button>
+    </form>
+  </article>
+
+  <article class="card panel-card">
+    <div class="list-item">
+      <div>
+        <h2>Restablecer por email</h2>
+        <p class="small-note">Por seguridad, escribe primero el email exacto de tu cuenta. Pista: {{ email_hint }}</p>
+      </div>
+    </div>
+    <form action="/account/password/reset-email" method="post" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>
+        <span>Email de la cuenta</span>
+        <input type="email" name="email" placeholder="tu@email.com" required>
+      </label>
+      <button type="submit" class="button button-ghost">Enviar enlace de restablecimiento</button>
+    </form>
+  </article>
+
+  <article class="card panel-card">
+    <div class="list-item">
+      <div>
+        <h2>Tokens de API</h2>
+        <p class="small-note">Crea un token para que un agente pueda analizar y publicar demandas en tu nombre vía API. Podrás revocarlo cuando quieras.</p>
+      </div>
+    </div>
+
+    <form action="/account/api-tokens" method="post" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>
+        <span>Nombre del token</span>
+        <input type="text" name="name" placeholder="Ej.: Agente CRM" required>
+      </label>
+      <button type="submit" class="button button-primary">Crear token</button>
+    </form>
+
+    {% if new_api_token %}
+      <div class="api-token-reveal">
+        <strong>Token nuevo: {{ new_api_token.name or 'Token API' }}</strong>
+        <p class="small-note">Cópialo ahora. Por seguridad no volverá a mostrarse completo.</p>
+        <div class="api-token-copy-row">
+          <textarea readonly data-copy-source="api-token">{{ new_api_token.token }}</textarea>
+          <button type="button" class="button button-ghost" data-copy-target="api-token">Copiar</button>
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="api-token-list">
+      {% if api_tokens %}
+        {% for token in api_tokens %}
+          <div class="api-token-item">
+            <div class="api-token-copy">
+              <strong>{{ token.name }}</strong>
+              <span class="small-note">{{ token.token_prefix }}…</span>
+              <span class="small-note">Creado: {{ token.created_at.strftime('%d/%m/%Y %H:%M') if token.created_at else '—' }}</span>
+              <span class="small-note">Último uso: {{ token.last_used_at.strftime('%d/%m/%Y %H:%M') if token.last_used_at else 'Todavía no usado' }}</span>
+              {% if token.revoked_at %}
+                <span class="badge">Revocado</span>
+              {% endif %}
+            </div>
+            {% if not token.revoked_at %}
+              <form action="/account/api-tokens/{{ token.id }}/revoke" method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="button danger-button-soft">Revocar</button>
+              </form>
+            {% endif %}
+          </div>
+        {% endfor %}
+      {% else %}
+        <p class="small-note">Todavía no has creado ningún token.</p>
+      {% endif %}
+    </div>
+  </article>
+</section>
+
+<section class="card panel-card api-docs-card">
+  <div class="list-item">
+    <div>
+      <h2>API para agentes</h2>
+      <p class="small-note">La API reutiliza la misma lógica del wizard web: primero analiza el texto, te dice qué campos faltan y solo publica cuando la demanda ya está completa.</p>
+    </div>
+  </div>
+
+  <div class="api-docs-block">
+    <p><strong>1. Analizar demanda</strong></p>
+    <pre><code>POST {{ api_base_url }}/api/agent/demands/analyze
+Authorization: Bearer TU_TOKEN_API
+Content-Type: application/json
+
+{
+  "text": "Busco clases particulares de clarinete en Sabadell",
+  "known_fields": {
+    "level": "principiante"
+  }
+}</code></pre>
+  </div>
+
+  <div class="api-docs-block">
+    <p><strong>2. Publicar cuando publish_ready = true</strong></p>
+    <pre><code>POST {{ api_base_url }}/api/agent/demands/publish
+Authorization: Bearer TU_TOKEN_API
+Content-Type: application/json
+
+{
+  "text": "Busco clases particulares de clarinete en Sabadell",
+  "known_fields": {
+    "level": "principiante",
+    "modality": "presencial"
+  }
+}</code></pre>
+  </div>
+</section>
+
+<script>
+  (() => {
+    document.querySelectorAll('[data-copy-target]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const target = button.dataset.copyTarget;
+        const source = document.querySelector(`[data-copy-source="${target}"]`);
+        if (!source) return;
+        const value = source.value || source.textContent || '';
+        try {
+          await navigator.clipboard.writeText(value);
+          button.textContent = 'Copiado';
+          window.setTimeout(() => {
+            button.textContent = 'Copiar';
+          }, 1800);
+        } catch (_) {
+          source.focus();
+          source.select();
+        }
+      });
+    });
+  })();
+</script>
+{% endblock %}

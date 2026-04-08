@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import psycopg2
@@ -23,14 +24,20 @@ from psycopg2.extras import RealDictCursor
 from demand_normalizer import normalize_existing_demand_record
 from location_geometry import radius_limit_km, zone_has_geometry, zones_intersect
 from master_schema import get_master_schema_registry
-from models import DemandResult, OfferMessageResult, OfferResult, PublicDemand, SessionState, UserProfile
+from models import APITokenInfo, DemandResult, OfferMessageResult, OfferResult, PublicDemand, SessionState, UserProfile
 from zone_selector import compact_zone_label, zone_to_storage_fields
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_DEMAND_EXPIRY_HOURS = 48
 EXPIRED_CONVERSATION_GRACE_DAYS = 7
+PASSWORD_RESET_TOKEN_HOURS = 2
 _POSTGIS_AVAILABLE: Optional[bool] = None
+SUPERADMIN_EMAILS = {
+    email.strip().lower()
+    for email in os.getenv("SUPERADMIN_EMAILS", "baylina@gmail.com").split(",")
+    if email.strip()
+}
 
 
 CREATE_USERS_SQL = """
@@ -41,6 +48,9 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT,
     avatar_url    TEXT,
     auth_source   TEXT NOT NULL DEFAULT 'local',
+    role          TEXT NOT NULL DEFAULT 'user',
+    is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+    last_login_at TIMESTAMP,
     created_at    TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at    TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -155,6 +165,31 @@ CREATE TABLE IF NOT EXISTS demand_wizards (
 );
 """
 
+CREATE_PASSWORD_RESET_TOKENS_SQL = """
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id          SERIAL PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    email       TEXT NOT NULL,
+    token_hash  TEXT NOT NULL UNIQUE,
+    expires_at  TIMESTAMP NOT NULL,
+    used_at     TIMESTAMP,
+    created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+);
+"""
+
+CREATE_API_TOKENS_SQL = """
+CREATE TABLE IF NOT EXISTS api_tokens (
+    id           SERIAL PRIMARY KEY,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name         TEXT NOT NULL,
+    token_hash   TEXT NOT NULL UNIQUE,
+    token_prefix TEXT NOT NULL,
+    last_used_at TIMESTAMP,
+    revoked_at   TIMESTAMP,
+    created_at   TIMESTAMP NOT NULL DEFAULT NOW()
+);
+"""
+
 CREATE_INDEXES_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_demands_user_id ON demands(user_id);",
     "CREATE INDEX IF NOT EXISTS idx_demands_status_created_at ON demands(status, created_at DESC);",
@@ -163,6 +198,8 @@ CREATE_INDEXES_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_saved_filters_user_id ON saved_filters(user_id, created_at DESC);",
     "CREATE INDEX IF NOT EXISTS idx_demands_location_lat_lon ON demands(location_lat, location_lon);",
     "CREATE INDEX IF NOT EXISTS idx_demand_wizards_updated_at ON demand_wizards(updated_at DESC);",
+    "CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id, created_at DESC);",
+    "CREATE INDEX IF NOT EXISTS idx_api_tokens_user_id ON api_tokens(user_id, created_at DESC);",
 ]
 
 POSTGIS_ALTERS_SQL = [
@@ -198,6 +235,9 @@ ALTERS_SQL = [
     "ALTER TABLE demands ADD COLUMN IF NOT EXISTS location_bbox JSONB DEFAULT '[]'::jsonb;",
     "ALTER TABLE demands ADD COLUMN IF NOT EXISTS location_geojson JSONB DEFAULT '{}'::jsonb;",
     "ALTER TABLE demands ADD COLUMN IF NOT EXISTS location_json JSONB DEFAULT '{}'::jsonb;",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP;",
     "ALTER TABLE demands ALTER COLUMN telegram_user_id DROP NOT NULL;",
     "ALTER TABLE offers ADD COLUMN IF NOT EXISTS message TEXT;",
     "ALTER TABLE offers ADD COLUMN IF NOT EXISTS supplier_is_pinned BOOLEAN NOT NULL DEFAULT FALSE;",
@@ -253,6 +293,18 @@ def _normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
+def _role_for_email(email: str) -> str:
+    return "superadmin" if _normalize_email(email) in SUPERADMIN_EMAILS else "user"
+
+
+def _hash_reset_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _hash_api_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 def hash_password(password: str) -> str:
     """Genera un hash con scrypt usando solo librerías estándar."""
     salt = secrets.token_bytes(16)
@@ -289,6 +341,8 @@ def init_db() -> None:
                 cur.execute(CREATE_OFFER_MESSAGES_SQL)
                 cur.execute(CREATE_SAVED_FILTERS_SQL)
                 cur.execute(CREATE_DEMAND_WIZARDS_SQL)
+                cur.execute(CREATE_PASSWORD_RESET_TOKENS_SQL)
+                cur.execute(CREATE_API_TOKENS_SQL)
                 for statement in ALTERS_SQL:
                     cur.execute(statement)
                 if postgis_available:
@@ -299,6 +353,17 @@ def init_db() -> None:
                 if postgis_available:
                     for statement in POSTGIS_INDEXES_SQL:
                         cur.execute(statement)
+                cur.execute("UPDATE users SET role = 'user' WHERE role = 'superadmin'")
+                if SUPERADMIN_EMAILS:
+                    cur.execute(
+                        """
+                        UPDATE users
+                        SET role = 'superadmin',
+                            updated_at = NOW()
+                        WHERE lower(email) = ANY(%s)
+                        """,
+                        (list(SUPERADMIN_EMAILS),),
+                    )
         conn.close()
         logger.info("✅ Base de datos inicializada correctamente.")
     except psycopg2.OperationalError as e:
@@ -549,20 +614,25 @@ def _row_to_user(row: dict[str, Any]) -> UserProfile:
     return UserProfile.model_validate(dict(row))
 
 
+def _row_to_api_token(row: dict[str, Any]) -> APITokenInfo:
+    return APITokenInfo.model_validate(dict(row))
+
+
 def create_user(email: str, password: str, full_name: str) -> UserProfile:
     normalized_email = _normalize_email(email)
     password_hash = hash_password(password)
+    role = _role_for_email(normalized_email)
     conn = _get_connection()
     try:
         with conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO users (email, full_name, password_hash, auth_source)
-                    VALUES (%s, %s, %s, 'local')
-                    RETURNING id, email, full_name, password_hash, avatar_url, auth_source, created_at;
+                    INSERT INTO users (email, full_name, password_hash, auth_source, role, last_login_at)
+                    VALUES (%s, %s, %s, 'local', %s, NOW())
+                    RETURNING id, email, full_name, password_hash, avatar_url, auth_source, role, is_active, last_login_at, created_at;
                     """,
-                    (normalized_email, full_name.strip(), password_hash),
+                    (normalized_email, full_name.strip(), password_hash, role),
                 )
                 return _row_to_user(cur.fetchone())
     finally:
@@ -575,7 +645,7 @@ def get_user_by_email(email: str) -> Optional[UserProfile]:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, email, full_name, password_hash, avatar_url, auth_source, created_at
+                SELECT id, email, full_name, password_hash, avatar_url, auth_source, role, is_active, last_login_at, created_at
                 FROM users
                 WHERE email = %s
                 """,
@@ -593,7 +663,7 @@ def get_user_by_id(user_id: int) -> Optional[UserProfile]:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, email, full_name, password_hash, avatar_url, auth_source, created_at
+                SELECT id, email, full_name, password_hash, avatar_url, auth_source, role, is_active, last_login_at, created_at
                 FROM users
                 WHERE id = %s
                 """,
@@ -605,11 +675,30 @@ def get_user_by_id(user_id: int) -> Optional[UserProfile]:
         conn.close()
 
 
+def record_user_login(user_id: int) -> None:
+    conn = _get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE users
+                    SET last_login_at = NOW(),
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (user_id,),
+                )
+    finally:
+        conn.close()
+
+
 def authenticate_user(email: str, password: str) -> Optional[UserProfile]:
     user = get_user_by_email(email)
-    if not user or not verify_password(password, user.password_hash):
+    if not user or not user.is_active or not verify_password(password, user.password_hash):
         return None
-    return user
+    record_user_login(user.id)
+    return get_user_by_id(user.id) or user
 
 
 def get_or_create_oauth_user(
@@ -626,7 +715,7 @@ def get_or_create_oauth_user(
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT u.id, u.email, u.full_name, u.password_hash, u.avatar_url, u.auth_source, u.created_at
+                    SELECT u.id, u.email, u.full_name, u.password_hash, u.avatar_url, u.auth_source, u.role, u.is_active, u.last_login_at, u.created_at
                     FROM oauth_accounts oa
                     JOIN users u ON u.id = oa.user_id
                     WHERE oa.provider = %s AND oa.provider_user_id = %s
@@ -635,11 +724,18 @@ def get_or_create_oauth_user(
                 )
                 row = cur.fetchone()
                 if row:
-                    return _row_to_user(row)
+                    user = _row_to_user(row)
+                    if not user.is_active:
+                        return user
+                    cur.execute(
+                        "UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id = %s",
+                        (user.id,),
+                    )
+                    return get_user_by_id(user.id) or user
 
                 cur.execute(
                     """
-                    SELECT id, email, full_name, password_hash, avatar_url, auth_source, created_at
+                    SELECT id, email, full_name, password_hash, avatar_url, auth_source, role, is_active, last_login_at, created_at
                     FROM users
                     WHERE email = %s
                     """,
@@ -649,13 +745,14 @@ def get_or_create_oauth_user(
                 if row:
                     user = _row_to_user(row)
                 else:
+                    role = _role_for_email(normalized_email)
                     cur.execute(
                         """
-                        INSERT INTO users (email, full_name, avatar_url, auth_source)
-                        VALUES (%s, %s, %s, %s)
-                        RETURNING id, email, full_name, password_hash, avatar_url, auth_source, created_at
+                        INSERT INTO users (email, full_name, avatar_url, auth_source, role, last_login_at)
+                        VALUES (%s, %s, %s, %s, %s, NOW())
+                        RETURNING id, email, full_name, password_hash, avatar_url, auth_source, role, is_active, last_login_at, created_at
                         """,
-                        (normalized_email, full_name.strip() or normalized_email, avatar_url, provider),
+                        (normalized_email, full_name.strip() or normalized_email, avatar_url, provider, role),
                     )
                     user = _row_to_user(cur.fetchone())
 
@@ -675,7 +772,371 @@ def get_or_create_oauth_user(
                     )
                     user.avatar_url = user.avatar_url or avatar_url
 
-                return user
+                if user.is_active:
+                    cur.execute(
+                        "UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id = %s",
+                        (user.id,),
+                    )
+                return get_user_by_id(user.id) or user
+    finally:
+        conn.close()
+
+
+def change_user_password(user_id: int, current_password: str, new_password: str) -> bool:
+    user = get_user_by_id(user_id)
+    if not user or not user.is_active or not verify_password(current_password, user.password_hash):
+        return False
+    new_hash = hash_password(new_password)
+    conn = _get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE users
+                    SET password_hash = %s,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (new_hash, user_id),
+                )
+                return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def create_password_reset_token(email: str) -> tuple[Optional[UserProfile], Optional[str]]:
+    user = get_user_by_email(email)
+    if not user or not user.is_active:
+        return None, None
+    token = secrets.token_urlsafe(32)
+    token_hash = _hash_reset_token(token)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=PASSWORD_RESET_TOKEN_HOURS)
+    conn = _get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE password_reset_tokens
+                    SET used_at = NOW()
+                    WHERE user_id = %s
+                      AND used_at IS NULL
+                    """,
+                    (user.id,),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO password_reset_tokens (user_id, email, token_hash, expires_at)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (user.id, user.email, token_hash, expires_at),
+                )
+    finally:
+        conn.close()
+    return user, token
+
+
+def get_password_reset_user(token: str) -> Optional[UserProfile]:
+    token_hash = _hash_reset_token(token)
+    conn = _get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT u.id, u.email, u.full_name, u.password_hash, u.avatar_url, u.auth_source, u.role, u.is_active, u.last_login_at, u.created_at
+                FROM password_reset_tokens prt
+                JOIN users u ON u.id = prt.user_id
+                WHERE prt.token_hash = %s
+                  AND prt.used_at IS NULL
+                  AND prt.expires_at > NOW()
+                  AND u.is_active = TRUE
+                ORDER BY prt.created_at DESC
+                LIMIT 1
+                """,
+                (token_hash,),
+            )
+            row = cur.fetchone()
+            return _row_to_user(row) if row else None
+    finally:
+        conn.close()
+
+
+def reset_password_with_token(token: str, new_password: str) -> bool:
+    token_hash = _hash_reset_token(token)
+    new_hash = hash_password(new_password)
+    conn = _get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT user_id
+                    FROM password_reset_tokens
+                    WHERE token_hash = %s
+                      AND used_at IS NULL
+                      AND expires_at > NOW()
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    FOR UPDATE
+                    """,
+                    (token_hash,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return False
+                user_id = row["user_id"]
+                cur.execute(
+                    """
+                    UPDATE users
+                    SET password_hash = %s,
+                        updated_at = NOW()
+                    WHERE id = %s
+                      AND is_active = TRUE
+                    """,
+                    (new_hash, user_id),
+                )
+                if cur.rowcount <= 0:
+                    return False
+                cur.execute(
+                    """
+                    UPDATE password_reset_tokens
+                    SET used_at = NOW()
+                    WHERE token_hash = %s
+                    """,
+                    (token_hash,),
+                )
+                return True
+    finally:
+        conn.close()
+
+
+def create_api_token(user_id: int, name: str) -> tuple[APITokenInfo, str]:
+    user = get_user_by_id(user_id)
+    if not user or not user.is_active:
+        raise ValueError("Usuario no disponible")
+
+    token_secret = secrets.token_urlsafe(32)
+    plain_token = f"dmdr_pat_{token_secret}"
+    token_hash = _hash_api_token(plain_token)
+    token_prefix = plain_token[:16]
+    conn = _get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO api_tokens (user_id, name, token_hash, token_prefix)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING id, user_id, name, token_prefix, last_used_at, revoked_at, created_at
+                    """,
+                    (user_id, (name or "Token API").strip(), token_hash, token_prefix),
+                )
+                token = _row_to_api_token(cur.fetchone())
+                return token, plain_token
+    finally:
+        conn.close()
+
+
+def list_api_tokens(user_id: int) -> list[APITokenInfo]:
+    conn = _get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, user_id, name, token_prefix, last_used_at, revoked_at, created_at
+                FROM api_tokens
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                """,
+                (user_id,),
+            )
+            return [_row_to_api_token(row) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def revoke_api_token(user_id: int, token_id: int) -> bool:
+    conn = _get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE api_tokens
+                    SET revoked_at = NOW()
+                    WHERE id = %s
+                      AND user_id = %s
+                      AND revoked_at IS NULL
+                    """,
+                    (token_id, user_id),
+                )
+                return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def authenticate_api_token(token: str) -> Optional[UserProfile]:
+    token_hash = _hash_api_token(token)
+    conn = _get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT u.id, u.email, u.full_name, u.password_hash, u.avatar_url, u.auth_source, u.role, u.is_active, u.last_login_at, u.created_at,
+                           t.id AS api_token_id
+                    FROM api_tokens t
+                    JOIN users u ON u.id = t.user_id
+                    WHERE t.token_hash = %s
+                      AND t.revoked_at IS NULL
+                      AND u.is_active = TRUE
+                    LIMIT 1
+                    """,
+                    (token_hash,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                token_id = row.pop("api_token_id", None)
+                if token_id is not None:
+                    cur.execute(
+                        """
+                        UPDATE api_tokens
+                        SET last_used_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (token_id,),
+                    )
+                return _row_to_user(row)
+    finally:
+        conn.close()
+
+
+def list_admin_users(query: str = "") -> list[dict[str, Any]]:
+    conn = _get_connection()
+    try:
+        with conn.cursor() as cur:
+            normalized_query = f"%{(query or '').strip().lower()}%"
+            cur.execute(
+                """
+                SELECT u.id, u.email, u.full_name, u.auth_source, u.role, u.is_active, u.created_at, u.last_login_at,
+                       COUNT(DISTINCT d.id)::INTEGER AS demand_count,
+                       COUNT(DISTINCT o.id)::INTEGER AS offer_count
+                FROM users u
+                LEFT JOIN demands d ON d.user_id = u.id
+                LEFT JOIN offers o ON o.supplier_user_id = u.id
+                WHERE (%s = '%%' OR lower(u.email) LIKE %s OR lower(u.full_name) LIKE %s)
+                GROUP BY u.id
+                ORDER BY lower(u.email) ASC
+                """,
+                (normalized_query, normalized_query, normalized_query),
+            )
+            return [dict(row) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def get_admin_user_detail(user_id: int) -> Optional[dict[str, Any]]:
+    conn = _get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, email, full_name, auth_source, role, is_active, created_at, last_login_at
+                FROM users
+                WHERE id = %s
+                """,
+                (user_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            payload = dict(row)
+            cur.execute(
+                """
+                SELECT id, summary, intent_type, status, created_at
+                FROM demands
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                """,
+                (user_id,),
+            )
+            payload["demands"] = [dict(item) for item in cur.fetchall()]
+            cur.execute(
+                """
+                SELECT o.id, o.demand_id, d.summary AS demand_summary, d.intent_type, d.status AS demand_status, o.created_at
+                FROM offers o
+                JOIN demands d ON d.id = o.demand_id
+                WHERE o.supplier_user_id = %s
+                ORDER BY o.created_at DESC
+                """,
+                (user_id,),
+            )
+            payload["offers"] = [dict(item) for item in cur.fetchall()]
+            return payload
+    finally:
+        conn.close()
+
+
+def set_user_active_status(user_id: int, is_active: bool) -> bool:
+    user = get_user_by_id(user_id)
+    if not user:
+        return False
+    conn = _get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE users
+                    SET is_active = %s,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (is_active, user_id),
+                )
+                return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def set_user_role(user_id: int, role: str) -> bool:
+    normalized_role = "superadmin" if (role or "").strip().lower() == "superadmin" else "user"
+    user = get_user_by_id(user_id)
+    if not user:
+        return False
+    conn = _get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE users
+                    SET role = %s,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (normalized_role, user_id),
+                )
+                return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def delete_user_permanently(user_id: int) -> bool:
+    user = get_user_by_id(user_id)
+    if not user or user.role == "superadmin":
+        return False
+    conn = _get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM offer_messages WHERE offer_id IN (SELECT id FROM offers WHERE demand_id IN (SELECT id FROM demands WHERE user_id = %s))", (user_id,))
+                cur.execute("DELETE FROM offers WHERE demand_id IN (SELECT id FROM demands WHERE user_id = %s)", (user_id,))
+                cur.execute("DELETE FROM demands WHERE user_id = %s", (user_id,))
+                cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
+                return cur.rowcount > 0
     finally:
         conn.close()
 
@@ -1858,8 +2319,14 @@ def create_offer(demand_id: int, supplier_user_id: int, message: str) -> OfferRe
         conn.close()
 
 
-def get_offer_thread(offer_id: int, viewer_user_id: int) -> Optional[dict[str, Any]]:
+def get_offer_thread(
+    offer_id: int,
+    viewer_user_id: int,
+    participant_user_id: Optional[int] = None,
+    mark_read: bool = True,
+) -> Optional[dict[str, Any]]:
     """Obtiene un hilo de oferta si el usuario participa en él como D u O."""
+    participant_id = participant_user_id or viewer_user_id
     conn = _get_connection()
     try:
         with conn:
@@ -1885,7 +2352,7 @@ def get_offer_thread(offer_id: int, viewer_user_id: int) -> Optional[dict[str, A
                         OR d.expires_at > NOW() - interval '7 days'
                       )
                     """,
-                    (offer_id, viewer_user_id, viewer_user_id),
+                    (offer_id, participant_id, participant_id),
                 )
                 row = cur.fetchone()
                 if not row:
@@ -1909,7 +2376,8 @@ def get_offer_thread(offer_id: int, viewer_user_id: int) -> Optional[dict[str, A
                 )
                 data["effective_status"] = str(data.get("demand_status") or "open").lower()
                 data["can_reply"] = data["effective_status"] == "open"
-                mark_offer_thread_as_read(cur, offer_id, viewer_user_id, data["demand_owner_user_id"], data["supplier_user_id"])
+                if mark_read:
+                    mark_offer_thread_as_read(cur, offer_id, participant_id, data["demand_owner_user_id"], data["supplier_user_id"])
                 cur.execute(
                     """
                     SELECT om.id, om.offer_id, om.sender_user_id, u.full_name AS sender_name,
@@ -1922,7 +2390,8 @@ def get_offer_thread(offer_id: int, viewer_user_id: int) -> Optional[dict[str, A
                     (offer_id,),
                 )
                 data["messages"] = [OfferMessageResult.model_validate(dict(msg)) for msg in cur.fetchall()]
-                data["viewer_is_owner"] = data["demand_owner_user_id"] == viewer_user_id
+                data["viewer_is_owner"] = data["demand_owner_user_id"] == participant_id
+                data["read_only"] = participant_id != viewer_user_id
                 return data
     finally:
         conn.close()

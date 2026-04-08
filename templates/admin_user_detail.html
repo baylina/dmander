@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="section-head">
+  <div>
+    <p class="eyebrow">Administración</p>
+    <h1>{{ managed_user.full_name }}</h1>
+    <p class="small-note">{{ managed_user.email }} · alta {{ managed_user.created_at.strftime("%d/%m/%Y %H:%M") if managed_user.created_at else "sin fecha" }}</p>
+  </div>
+  <div class="hero-actions">
+    <a href="/admin/users" class="button button-ghost">Volver a usuarios</a>
+  </div>
+</section>
+
+<section class="card-grid admin-user-detail-grid">
+  <article class="card panel-card">
+    <h2>Cuenta</h2>
+    <div class="meta-row">
+      <span>Rol: {{ managed_user.role }}</span>
+      <span>Proveedor: {{ managed_user.auth_source }}</span>
+      <span>Último acceso: {{ managed_user.last_login_at.strftime("%d/%m/%Y %H:%M") if managed_user.last_login_at else "nunca" }}</span>
+    </div>
+    <div class="thread-actions admin-user-actions">
+      {% if managed_user.role != "superadmin" %}
+        <form action="/admin/users/{{ managed_user.id }}/toggle-active" method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="action" value="{{ 'deactivate' if managed_user.is_active else 'activate' }}">
+          <button type="submit" class="button button-ghost">{{ 'Desactivar' if managed_user.is_active else 'Activar' }} usuario</button>
+        </form>
+        <form action="/admin/users/{{ managed_user.id }}/delete" method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="button button-danger">Borrar definitivamente</button>
+        </form>
+      {% else %}
+        <span class="pill soft">La cuenta superadmin no se puede desactivar ni borrar.</span>
+      {% endif %}
+    </div>
+  </article>
+
+  <article class="card panel-card">
+    <h2>Demandas publicadas</h2>
+    <div class="list-stack admin-sublist">
+      {% for demand in managed_user.demands %}
+        <div class="compact-card">
+          <div class="title-inline">
+            <strong>{{ demand.summary }}</strong>
+            <span class="pill soft">{{ demand.status }}</span>
+          </div>
+          <p class="small-note">{{ demand.intent_type }} · {{ demand.created_at.strftime("%d/%m/%Y %H:%M") if demand.created_at else "" }}</p>
+          <a href="/demands/{{ demand.id }}" class="row-link-tool">Ver demanda</a>
+        </div>
+      {% else %}
+        <p class="small-note">Este usuario todavía no ha publicado demandas.</p>
+      {% endfor %}
+    </div>
+  </article>
+
+  <article class="card panel-card">
+    <h2>Ofertas enviadas</h2>
+    <div class="list-stack admin-sublist">
+      {% for offer in managed_user.offers %}
+        <div class="compact-card">
+          <div class="title-inline">
+            <strong>{{ offer.demand_summary }}</strong>
+            <span class="pill soft">{{ offer.demand_status }}</span>
+          </div>
+          <p class="small-note">{{ offer.intent_type }} · {{ offer.created_at.strftime("%d/%m/%Y %H:%M") if offer.created_at else "" }}</p>
+          <a href="/app/chats?role=supplier&offer_id={{ offer.id }}" class="row-link-tool">Ver conversación</a>
+        </div>
+      {% else %}
+        <p class="small-note">Este usuario todavía no ha enviado ofertas.</p>
+      {% endfor %}
+    </div>
+  </article>
+</section>
+{% endblock %}

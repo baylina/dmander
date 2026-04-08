@@ -16,7 +16,11 @@ import os
 import secrets
 import json
 import re
+import smtplib
+import logging
+import asyncio
 from pathlib import Path
+from email.message import EmailMessage
 from urllib.parse import quote
 from urllib.parse import urlencode
 from urllib.request import Request as UrlRequest, urlopen
@@ -24,40 +28,55 @@ from typing import Any, Optional
 from datetime import datetime, date
 
 from fastapi import FastAPI, Form, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from psycopg2 import IntegrityError
 from starlette.middleware.sessions import SessionMiddleware
 
 from agent import DemandAgent
 from database import (
     admin_delete_demand,
+    authenticate_api_token,
     authenticate_user,
     clear_demand_wizard as clear_demand_wizard_record,
+    change_user_password,
     create_offer_message,
     create_offer,
+    create_api_token,
+    create_password_reset_token,
     create_user,
+    delete_user_permanently,
     delete_filter,
     delete_web_demand,
     get_editable_demand,
+    get_admin_user_detail,
     get_dashboard_data,
     get_demand_detail,
     get_demand_wizard as get_demand_wizard_record,
+    get_user_by_email,
     get_notification_summary,
     get_offer_thread,
     get_offers_for_owner,
     get_or_create_oauth_user,
     get_public_demands,
+    get_password_reset_user,
     get_saved_filter,
     get_user_by_id,
+    list_admin_users,
+    list_api_tokens,
     init_db,
     list_admin_demands,
     list_saved_filters,
+    record_user_login,
+    reset_password_with_token,
+    revoke_api_token,
     save_web_demand_from_agent,
     save_demand_wizard as save_demand_wizard_record,
     save_filter,
+    set_user_role,
+    set_user_active_status,
     update_filter,
     update_supplier_offer_workspace,
     update_web_demand_lifecycle,
@@ -103,6 +122,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 RUNTIME_DIR = Path(BASE_DIR) / ".runtime"
 GUEST_WIZARDS_DIR = RUNTIME_DIR / "guest_wizards"
+logger = logging.getLogger(__name__)
 
 SELECT_FIELD_OPTIONS: dict[str, list[dict[str, str]]] = {
     "modality": [
@@ -171,6 +191,16 @@ SOCIAL_PROVIDERS: dict[str, dict[str, Any]] = {
 }
 
 
+class AgentDemandAnalyzeRequest(BaseModel):
+    text: str
+    known_fields: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentDemandPublishRequest(BaseModel):
+    text: str
+    known_fields: dict[str, Any] = Field(default_factory=dict)
+
+
 def build_app() -> FastAPI:
     init_db()
 
@@ -208,7 +238,7 @@ def build_app() -> FastAPI:
         saved_filter_id: str = "",
         page: int = 1,
     ) -> HTMLResponse:
-        current_user = _get_current_user(request)
+        current_user = _get_display_user(request)
         current_saved_filter = None
         selected_saved_filter_id = int(saved_filter_id) if str(saved_filter_id).strip().isdigit() else None
         selected_domains = _parse_json_string_list(intent_domains_json)
@@ -358,6 +388,10 @@ def build_app() -> FastAPI:
         _validate_csrf(request, csrf_token)
         user = authenticate_user(email, password)
         if not user:
+            known_user = get_user_by_email(email)
+            if known_user and not known_user.is_active:
+                _flash(request, "Tu cuenta está desactivada. Contacta con administración si necesitas recuperarla.", "error")
+                return _redirect("/login")
             _flash(request, "Email o contraseña incorrectos.", "error")
             return _redirect("/login")
 
@@ -369,6 +403,53 @@ def build_app() -> FastAPI:
     @app.get("/signup", response_class=HTMLResponse)
     async def signup_page(request: Request) -> HTMLResponse:
         return _render(request, "signup.html", {"title": "Crear cuenta", "active_nav": "signup", "page_kind": "auth"})
+
+    @app.get("/forgot-password", response_class=HTMLResponse)
+    async def forgot_password_page(request: Request) -> HTMLResponse:
+        current_user = _get_current_user(request)
+        return _render(
+            request,
+            "forgot_password.html",
+            {
+                "title": "Recuperar contraseña",
+                "active_nav": "login",
+                "page_kind": "auth",
+                "email_hint": _mask_email_hint(current_user.email) if current_user else "",
+            },
+        )
+
+    @app.post("/forgot-password")
+    async def forgot_password(
+        request: Request,
+        email: str = Form(...),
+        csrf_token: str = Form(...),
+    ) -> RedirectResponse:
+        _validate_csrf(request, csrf_token)
+        normalized_email = email.strip().lower()
+        if "@" not in normalized_email or "." not in normalized_email:
+            _flash(request, "Introduce el email de la cuenta para enviarte el enlace.", "error")
+            return _redirect("/forgot-password")
+        user, token = create_password_reset_token(normalized_email)
+        if user and token:
+            base_url = _app_base_url(request)
+            reset_url = f"{base_url}/reset-password/{token}"
+            body = (
+                f"Hola {user.full_name},\n\n"
+                "Hemos recibido una solicitud para restablecer tu contraseña en dmander.\n\n"
+                f"Abre este enlace para elegir una nueva contraseña:\n{reset_url}\n\n"
+                "Si tú no has solicitado este cambio, puedes ignorar este email.\n"
+                "El enlace caduca en 2 horas.\n"
+            )
+            try:
+                _send_email_message(user.email, "Restablecer contraseña en dmander", body)
+            except Exception:
+                logger.exception("No se pudo enviar el email de reset a %s", user.email)
+        _flash(
+            request,
+            "Si existe una cuenta activa para ese email, te acabamos de enviar un enlace para restablecer la contraseña.",
+            "success",
+        )
+        return _redirect("/login")
 
     @app.post("/signup")
     async def signup(
@@ -402,10 +483,180 @@ def build_app() -> FastAPI:
             _flash(request, "Ya existe una cuenta con ese email.", "error")
             return _redirect("/signup")
 
+        try:
+            base_url = _app_base_url(request)
+            body = (
+                f"Hola {user.full_name},\n\n"
+                "Tu cuenta en dmander ya está creada correctamente.\n\n"
+                f"Ya puedes acceder aquí:\n{base_url}/login\n\n"
+                "Si no has sido tú, ignora este mensaje.\n"
+            )
+            _send_email_message(user.email, "Tu cuenta de dmander ya está activa", body)
+        except Exception:
+            logger.exception("No se pudo enviar el email de bienvenida a %s", user.email)
+
         request.session["user_id"] = user.id
         redirect_target = _complete_pending_guest_publication(request, user) or "/app/chats"
         _flash(request, f"Cuenta creada. Hola, {user.full_name}.", "success")
         return _redirect(redirect_target)
+
+    @app.get("/account/security", response_class=HTMLResponse)
+    async def account_security_page(request: Request) -> HTMLResponse:
+        user = _get_current_user(request)
+        if not user:
+            _flash(request, "Necesitas iniciar sesión para acceder a la seguridad de tu cuenta.", "error")
+            return _redirect("/login")
+        return _render(
+            request,
+            "account_security.html",
+            {
+                "title": "Seguridad de la cuenta",
+                "active_nav": "account-security",
+                "page_kind": "app",
+                "email_hint": _mask_email_hint(user.email),
+                "api_tokens": list_api_tokens(user.id),
+                "new_api_token": _pop_created_api_token(request),
+                "api_base_url": _app_base_url(request),
+            },
+        )
+
+    @app.post("/account/password/change")
+    async def account_change_password(
+        request: Request,
+        current_password: str = Form(...),
+        new_password: str = Form(...),
+        new_password_confirm: str = Form(...),
+        csrf_token: str = Form(...),
+    ) -> RedirectResponse:
+        _validate_csrf(request, csrf_token)
+        user = _get_current_user(request)
+        if not user:
+            _flash(request, "Necesitas iniciar sesión para cambiar la contraseña.", "error")
+            return _redirect("/login")
+        if not user.password_hash:
+            _flash(request, "Tu cuenta accede actualmente con Google. Usa el envío por email para definir una contraseña local.", "error")
+            return _redirect("/account/security")
+        if len(new_password) < 8:
+            _flash(request, "La nueva contraseña debe tener al menos 8 caracteres.", "error")
+            return _redirect("/account/security")
+        if new_password != new_password_confirm:
+            _flash(request, "La confirmación de la nueva contraseña no coincide.", "error")
+            return _redirect("/account/security")
+        if not change_user_password(user.id, current_password, new_password):
+            _flash(request, "No he podido cambiar la contraseña. Revisa la contraseña actual.", "error")
+            return _redirect("/account/security")
+        _flash(request, "Tu contraseña se ha actualizado correctamente.", "success")
+        return _redirect("/account/security")
+
+    @app.post("/account/password/reset-email")
+    async def account_send_password_reset(
+        request: Request,
+        email: str = Form(...),
+        csrf_token: str = Form(...),
+    ) -> RedirectResponse:
+        _validate_csrf(request, csrf_token)
+        user = _get_current_user(request)
+        if not user:
+            _flash(request, "Necesitas iniciar sesión para solicitar un reset por email.", "error")
+            return _redirect("/login")
+        normalized_email = email.strip().lower()
+        if normalized_email != user.email.lower():
+            _flash(request, "Para enviar el enlace debes escribir exactamente el email de tu cuenta.", "error")
+            return _redirect("/account/security")
+        reset_user, token = create_password_reset_token(normalized_email)
+        if reset_user and token:
+            base_url = _app_base_url(request)
+            reset_url = f"{base_url}/reset-password/{token}"
+            body = (
+                f"Hola {reset_user.full_name},\n\n"
+                "Has solicitado restablecer tu contraseña en dmander.\n\n"
+                f"Puedes hacerlo desde este enlace:\n{reset_url}\n\n"
+                "El enlace caduca en 2 horas.\n"
+            )
+            try:
+                _send_email_message(reset_user.email, "Restablecer contraseña en dmander", body)
+            except Exception:
+                logger.exception("No se pudo enviar el email de reset autenticado a %s", reset_user.email)
+        _flash(request, "Si el email corresponde a tu cuenta activa, te hemos enviado el enlace de restablecimiento.", "success")
+        return _redirect("/account/security")
+
+    @app.post("/account/api-tokens")
+    async def account_create_api_token(
+        request: Request,
+        name: str = Form(...),
+        csrf_token: str = Form(...),
+    ) -> RedirectResponse:
+        _validate_csrf(request, csrf_token)
+        user = _get_current_user(request)
+        if not user:
+            _flash(request, "Necesitas iniciar sesión para crear un token de API.", "error")
+            return _redirect("/login")
+        token_name = (name or "").strip()
+        if len(token_name) < 2:
+            _flash(request, "Ponle un nombre reconocible al token.", "error")
+            return _redirect("/account/security")
+        try:
+            _, plain_token = create_api_token(user.id, token_name)
+        except ValueError:
+            _flash(request, "No he podido crear el token.", "error")
+            return _redirect("/account/security")
+        _store_created_api_token(request, token_name, plain_token)
+        _flash(request, "Token creado. Cópialo ahora: por seguridad solo se muestra una vez.", "success")
+        return _redirect("/account/security")
+
+    @app.post("/account/api-tokens/{token_id}/revoke")
+    async def account_revoke_api_token(
+        request: Request,
+        token_id: int,
+        csrf_token: str = Form(...),
+    ) -> RedirectResponse:
+        _validate_csrf(request, csrf_token)
+        user = _get_current_user(request)
+        if not user:
+            _flash(request, "Necesitas iniciar sesión para revocar un token de API.", "error")
+            return _redirect("/login")
+        if revoke_api_token(user.id, token_id):
+            _flash(request, "Token revocado.", "success")
+        else:
+            _flash(request, "No he podido revocar ese token.", "error")
+        return _redirect("/account/security")
+
+    @app.get("/reset-password/{token}", response_class=HTMLResponse)
+    async def reset_password_page(request: Request, token: str) -> HTMLResponse:
+        token_user = get_password_reset_user(token)
+        return _render(
+            request,
+            "reset_password.html",
+            {
+                "title": "Nueva contraseña",
+                "active_nav": "login",
+                "page_kind": "auth",
+                "reset_token": token,
+                "token_valid": bool(token_user),
+                "email_hint": _mask_email_hint(token_user.email) if token_user else "",
+            },
+        )
+
+    @app.post("/reset-password/{token}")
+    async def reset_password_submit(
+        request: Request,
+        token: str,
+        password: str = Form(...),
+        password_confirm: str = Form(...),
+        csrf_token: str = Form(...),
+    ) -> RedirectResponse:
+        _validate_csrf(request, csrf_token)
+        if len(password) < 8:
+            _flash(request, "La nueva contraseña debe tener al menos 8 caracteres.", "error")
+            return _redirect(f"/reset-password/{token}")
+        if password != password_confirm:
+            _flash(request, "La confirmación de la nueva contraseña no coincide.", "error")
+            return _redirect(f"/reset-password/{token}")
+        if not reset_password_with_token(token, password):
+            _flash(request, "El enlace ya no es válido o ha caducado.", "error")
+            return _redirect(f"/reset-password/{token}")
+        _flash(request, "Contraseña restablecida. Ya puedes iniciar sesión.", "success")
+        return _redirect("/login")
 
     @app.post("/logout")
     async def logout(request: Request, csrf_token: str = Form(...)) -> RedirectResponse:
@@ -437,12 +688,20 @@ def build_app() -> FastAPI:
         role: str = "owner",
         demand_status: str = "active",
         offer_filter: str = "visible",
+        admin_view_user_id: int | None = None,
     ) -> HTMLResponse:
-        user = _get_current_user(request)
-        if not user:
+        actor_user = _get_current_user(request)
+        if not actor_user:
             _flash(request, "Necesitas iniciar sesión para acceder a tus chats.", "error")
             return _redirect("/login")
-        data = get_dashboard_data(user.id, demand_status_filter=demand_status, offer_filter=offer_filter)
+        workspace_user = _get_display_user(request, actor_user) or actor_user
+        admin_read_only = _is_admin_readonly_view(request, actor_user)
+        if admin_view_user_id and _is_superadmin(actor_user):
+            target_user = get_user_by_id(admin_view_user_id)
+            if target_user:
+                workspace_user = target_user
+                admin_read_only = workspace_user.id != actor_user.id
+        data = get_dashboard_data(workspace_user.id, demand_status_filter=demand_status, offer_filter=offer_filter)
         return _render(
             request,
             "app_chats.html",
@@ -462,12 +721,15 @@ def build_app() -> FastAPI:
                 "initial_offer_filter": data.get("offer_filter", "visible"),
                 "demand_status_counts": data.get("my_demands_status_counts", {}),
                 "offer_status_counts": data.get("my_offers_status_counts", {}),
+                "workspace_user": workspace_user,
+                "admin_workspace_user_id": workspace_user.id if admin_read_only else None,
+                "admin_workspace_read_only": admin_read_only,
             },
         )
 
     @app.get("/app/filters", response_class=HTMLResponse)
     async def app_filters_page(request: Request) -> HTMLResponse:
-        user = _get_current_user(request)
+        user = _get_display_user(request)
         if not user:
             _flash(request, "Necesitas iniciar sesión para acceder a tus filtros.", "error")
             return _redirect("/login")
@@ -496,12 +758,9 @@ def build_app() -> FastAPI:
 
     @app.get("/admin/demands", response_class=HTMLResponse)
     async def admin_demands_page(request: Request) -> HTMLResponse:
-        user = _get_current_user(request)
-        if not user:
-            _flash(request, "Necesitas iniciar sesión para acceder a esta vista.", "error")
-            return _redirect("/login")
-        if not _normalization_debug_enabled():
-            raise HTTPException(status_code=404, detail="Vista de depuración no disponible")
+        redirect = _require_superadmin_redirect(request)
+        if redirect:
+            return redirect
         return _render(
             request,
             "admin_demands.html",
@@ -513,18 +772,20 @@ def build_app() -> FastAPI:
 
     @app.get("/admin", response_class=HTMLResponse)
     async def admin_index_page(request: Request) -> HTMLResponse:
-        user = _get_current_user(request)
-        if not user:
-            _flash(request, "Necesitas iniciar sesión para acceder a esta vista.", "error")
-            return _redirect("/login")
-        if not _normalization_debug_enabled():
-            raise HTTPException(status_code=404, detail="Vista de depuración no disponible")
+        redirect = _require_superadmin_redirect(request)
+        if redirect:
+            return redirect
         return _render(
             request,
             "admin_index.html",
             {
                 "title": "Utilidades internas",
                 "admin_tools": [
+                    {
+                        "title": "Usuarios",
+                        "href": "/admin/users",
+                        "description": "Gestiona usuarios, fechas de alta, último acceso, activación y borrado definitivo.",
+                    },
                     {
                         "title": "Administración de Demandas",
                         "href": "/admin/demands",
@@ -544,19 +805,127 @@ def build_app() -> FastAPI:
             },
         )
 
+    @app.get("/admin/users", response_class=HTMLResponse)
+    async def admin_users_page(request: Request, q: str = "") -> HTMLResponse:
+        redirect = _require_superadmin_redirect(request)
+        if redirect:
+            return redirect
+        return _render(
+            request,
+            "admin_users.html",
+            {
+                "title": "Usuarios",
+                "users": list_admin_users(q),
+                "search_query": q,
+            },
+        )
+
+    @app.get("/admin/view-as")
+    async def admin_view_as(
+        request: Request,
+        user_id: int | None = None,
+        next: str = "/",
+    ) -> RedirectResponse:
+        redirect = _require_superadmin_redirect(request)
+        if redirect:
+            return redirect
+        actor = _get_current_user(request)
+        if not actor:
+            return _redirect("/login")
+        if user_id and user_id != actor.id:
+            target_user = get_user_by_id(user_id)
+            if target_user:
+                request.session["admin_view_user_id"] = target_user.id
+            else:
+                request.session.pop("admin_view_user_id", None)
+        else:
+            request.session.pop("admin_view_user_id", None)
+        next_target = (next or "/").strip() or "/"
+        if not next_target.startswith("/"):
+            next_target = "/"
+        return _redirect(next_target)
+
+    @app.get("/admin/users/{user_id}", response_class=HTMLResponse)
+    async def admin_user_detail_page(request: Request, user_id: int) -> HTMLResponse:
+        redirect = _require_superadmin_redirect(request)
+        if redirect:
+            return redirect
+        user_detail = get_admin_user_detail(user_id)
+        if not user_detail:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        return _render(
+            request,
+            "admin_user_detail.html",
+            {
+                "title": f"Usuario · {user_detail['full_name']}",
+                "managed_user": user_detail,
+            },
+        )
+
+    @app.post("/admin/users/{user_id}/toggle-active")
+    async def admin_user_toggle_active(
+        request: Request,
+        user_id: int,
+        csrf_token: str = Form(...),
+        action: str = Form(...),
+        q: str = Form(""),
+    ) -> RedirectResponse:
+        redirect = _require_superadmin_redirect(request)
+        if redirect:
+            return redirect
+        _validate_csrf(request, csrf_token)
+        target_state = action.strip().lower() == "activate"
+        if set_user_active_status(user_id, target_state):
+            _flash(request, "Estado del usuario actualizado.", "success")
+        else:
+            _flash(request, "No he podido actualizar el estado de ese usuario.", "error")
+        return _redirect(f"/admin/users?q={quote(q)}" if q else "/admin/users")
+
+    @app.post("/admin/users/{user_id}/toggle-role")
+    async def admin_user_toggle_role(
+        request: Request,
+        user_id: int,
+        csrf_token: str = Form(...),
+        role: str = Form(...),
+        q: str = Form(""),
+    ) -> RedirectResponse:
+        redirect = _require_superadmin_redirect(request)
+        if redirect:
+            return redirect
+        _validate_csrf(request, csrf_token)
+        if set_user_role(user_id, role):
+            _flash(request, "Rol del usuario actualizado.", "success")
+        else:
+            _flash(request, "No he podido actualizar el rol de ese usuario.", "error")
+        return _redirect(f"/admin/users?q={quote(q)}" if q else "/admin/users")
+
+    @app.post("/admin/users/{user_id}/delete")
+    async def admin_user_delete(
+        request: Request,
+        user_id: int,
+        csrf_token: str = Form(...),
+        q: str = Form(""),
+    ) -> RedirectResponse:
+        redirect = _require_superadmin_redirect(request)
+        if redirect:
+            return redirect
+        _validate_csrf(request, csrf_token)
+        if delete_user_permanently(user_id):
+            _flash(request, "Usuario eliminado definitivamente.", "success")
+            return _redirect(f"/admin/users?q={quote(q)}" if q else "/admin/users")
+        _flash(request, "No he podido eliminar ese usuario.", "error")
+        return _redirect(f"/admin/users?q={quote(q)}" if q else "/admin/users")
+
     @app.post("/admin/demands/{demand_id}/delete")
     async def admin_delete_demand_route(
         request: Request,
         demand_id: int,
         csrf_token: str = Form(...),
     ) -> RedirectResponse:
+        redirect = _require_superadmin_redirect(request)
+        if redirect:
+            return redirect
         _validate_csrf(request, csrf_token)
-        user = _get_current_user(request)
-        if not user:
-            _flash(request, "Necesitas iniciar sesión para acceder a esta vista.", "error")
-            return _redirect("/login")
-        if not _normalization_debug_enabled():
-            raise HTTPException(status_code=404, detail="Vista de depuración no disponible")
         if admin_delete_demand(demand_id):
             _flash(request, "Demanda eliminada junto con sus ofertas y conversaciones.", "success")
         else:
@@ -565,12 +934,9 @@ def build_app() -> FastAPI:
 
     @app.get("/admin/schema", response_class=HTMLResponse)
     async def admin_schema_page(request: Request) -> HTMLResponse:
-        user = _get_current_user(request)
-        if not user:
-            _flash(request, "Necesitas iniciar sesión para acceder a esta vista.", "error")
-            return _redirect("/login")
-        if not _normalization_debug_enabled():
-            raise HTTPException(status_code=404, detail="Vista de depuración no disponible")
+        redirect = _require_superadmin_redirect(request)
+        if redirect:
+            return redirect
         return _render(
             request,
             "admin_schema.html",
@@ -582,12 +948,9 @@ def build_app() -> FastAPI:
 
     @app.get("/admin/schema/types", response_class=HTMLResponse)
     async def admin_schema_types_page(request: Request) -> HTMLResponse:
-        user = _get_current_user(request)
-        if not user:
-            _flash(request, "Necesitas iniciar sesión para acceder a esta vista.", "error")
-            return _redirect("/login")
-        if not _normalization_debug_enabled():
-            raise HTTPException(status_code=404, detail="Vista de depuración no disponible")
+        redirect = _require_superadmin_redirect(request)
+        if redirect:
+            return redirect
         return _render(
             request,
             "admin_schema_fields.html",
@@ -598,15 +961,19 @@ def build_app() -> FastAPI:
         )
 
     @app.get("/admin/schema/fields")
-    async def admin_schema_fields_legacy_redirect() -> RedirectResponse:
+    async def admin_schema_fields_legacy_redirect(request: Request) -> RedirectResponse:
+        redirect = _require_superadmin_redirect(request)
+        if redirect:
+            return redirect
         return _redirect("/admin/schema/types")
 
     @app.post("/admin/schema/domains/create")
     async def admin_schema_create_domain(request: Request) -> RedirectResponse:
+        redirect = _require_superadmin_redirect(request)
+        if redirect:
+            return redirect
         form = await request.form()
         _validate_csrf(request, str(form.get("csrf_token", "")))
-        if not _normalization_debug_enabled():
-            raise HTTPException(status_code=404, detail="Vista de depuración no disponible")
         try:
             create_domain(str(form.get("code", "")).strip(), str(form.get("name", "")).strip())
             _flash(request, "Dominio creado.", "success")
@@ -616,10 +983,11 @@ def build_app() -> FastAPI:
 
     @app.post("/admin/schema/domains/update")
     async def admin_schema_update_domain(request: Request) -> RedirectResponse:
+        redirect = _require_superadmin_redirect(request)
+        if redirect:
+            return redirect
         form = await request.form()
         _validate_csrf(request, str(form.get("csrf_token", "")))
-        if not _normalization_debug_enabled():
-            raise HTTPException(status_code=404, detail="Vista de depuración no disponible")
         try:
             update_domain(
                 str(form.get("original_code", "")).strip(),
@@ -633,10 +1001,11 @@ def build_app() -> FastAPI:
 
     @app.post("/admin/schema/domains/delete")
     async def admin_schema_delete_domain(request: Request) -> RedirectResponse:
+        redirect = _require_superadmin_redirect(request)
+        if redirect:
+            return redirect
         form = await request.form()
         _validate_csrf(request, str(form.get("csrf_token", "")))
-        if not _normalization_debug_enabled():
-            raise HTTPException(status_code=404, detail="Vista de depuración no disponible")
         try:
             delete_domain(str(form.get("code", "")).strip())
             _flash(request, "Dominio eliminado.", "success")
@@ -646,10 +1015,11 @@ def build_app() -> FastAPI:
 
     @app.post("/admin/schema/domains/reorder")
     async def admin_schema_reorder_domains(request: Request) -> RedirectResponse:
+        redirect = _require_superadmin_redirect(request)
+        if redirect:
+            return redirect
         form = await request.form()
         _validate_csrf(request, str(form.get("csrf_token", "")))
-        if not _normalization_debug_enabled():
-            raise HTTPException(status_code=404, detail="Vista de depuración no disponible")
         try:
             reorder_domains(_form_text_list(form, "domain_order"))
             _flash(request, "Orden de dominios actualizado.", "success")
@@ -659,10 +1029,11 @@ def build_app() -> FastAPI:
 
     @app.post("/admin/schema/intents/create")
     async def admin_schema_create_intent(request: Request) -> RedirectResponse:
+        redirect = _require_superadmin_redirect(request)
+        if redirect:
+            return redirect
         form = await request.form()
         _validate_csrf(request, str(form.get("csrf_token", "")))
-        if not _normalization_debug_enabled():
-            raise HTTPException(status_code=404, detail="Vista de depuración no disponible")
         try:
             create_intent_type(_intent_payload_from_form(form))
             _flash(request, "intent_type creado.", "success")
@@ -672,10 +1043,11 @@ def build_app() -> FastAPI:
 
     @app.post("/admin/schema/intents/reorder")
     async def admin_schema_reorder_intents(request: Request) -> RedirectResponse:
+        redirect = _require_superadmin_redirect(request)
+        if redirect:
+            return redirect
         form = await request.form()
         _validate_csrf(request, str(form.get("csrf_token", "")))
-        if not _normalization_debug_enabled():
-            raise HTTPException(status_code=404, detail="Vista de depuración no disponible")
         try:
             reorder_intent_types(
                 str(form.get("domain_code", "")).strip(),
@@ -688,10 +1060,11 @@ def build_app() -> FastAPI:
 
     @app.post("/admin/schema/intents/update")
     async def admin_schema_update_intent(request: Request) -> RedirectResponse:
+        redirect = _require_superadmin_redirect(request)
+        if redirect:
+            return redirect
         form = await request.form()
         _validate_csrf(request, str(form.get("csrf_token", "")))
-        if not _normalization_debug_enabled():
-            raise HTTPException(status_code=404, detail="Vista de depuración no disponible")
         try:
             update_intent_type(str(form.get("original_intent_type", "")).strip(), _intent_payload_from_form(form))
             _flash(request, "intent_type actualizado.", "success")
@@ -701,10 +1074,11 @@ def build_app() -> FastAPI:
 
     @app.post("/admin/schema/intents/delete")
     async def admin_schema_delete_intent(request: Request) -> RedirectResponse:
+        redirect = _require_superadmin_redirect(request)
+        if redirect:
+            return redirect
         form = await request.form()
         _validate_csrf(request, str(form.get("csrf_token", "")))
-        if not _normalization_debug_enabled():
-            raise HTTPException(status_code=404, detail="Vista de depuración no disponible")
         try:
             delete_intent_type(str(form.get("intent_type", "")).strip())
             _flash(request, "intent_type eliminado.", "success")
@@ -720,11 +1094,18 @@ def build_app() -> FastAPI:
         return _redirect(target)
 
     @app.get("/api/offers/{offer_id}/thread")
-    async def offer_thread_api(request: Request, offer_id: int) -> dict[str, Any]:
+    async def offer_thread_api(request: Request, offer_id: int, admin_view_user_id: int | None = None) -> dict[str, Any]:
         user = _get_current_user(request)
         if not user:
             raise HTTPException(status_code=401, detail="Autenticación requerida")
-        thread = get_offer_thread(offer_id, user.id)
+        participant_user_id = None
+        mark_read = True
+        if admin_view_user_id and _is_superadmin(user):
+            target_user = get_user_by_id(admin_view_user_id)
+            if target_user:
+                participant_user_id = target_user.id
+                mark_read = False
+        thread = get_offer_thread(offer_id, user.id, participant_user_id=participant_user_id, mark_read=mark_read)
         if not thread:
             raise HTTPException(status_code=404, detail="Conversación no encontrada")
         return _to_json_ready(thread)
@@ -822,13 +1203,134 @@ def build_app() -> FastAPI:
             raise HTTPException(status_code=401, detail="Autenticación requerida")
         return get_notification_summary(user.id)
 
-    @app.get("/api/workspace")
-    async def workspace_api(request: Request, demand_status: str = "active", offer_filter: str = "visible") -> dict[str, Any]:
+    @app.get("/api/notifications/stream")
+    async def notifications_stream(request: Request) -> StreamingResponse:
         user = _get_current_user(request)
         if not user:
             raise HTTPException(status_code=401, detail="Autenticación requerida")
-        data = get_dashboard_data(user.id, demand_status_filter=demand_status, offer_filter=offer_filter)
+
+        async def event_stream():
+            last_payload = None
+            try:
+                while True:
+                    if await request.is_disconnected():
+                        break
+                    payload = _to_json_ready(get_notification_summary(user.id))
+                    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+                    if serialized != last_payload:
+                        yield _sse_event("notifications", serialized)
+                        last_payload = serialized
+                    else:
+                        yield ": keep-alive\n\n"
+                    await asyncio.sleep(8)
+            except asyncio.CancelledError:
+                return
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.get("/api/workspace")
+    async def workspace_api(
+        request: Request,
+        demand_status: str = "active",
+        offer_filter: str = "visible",
+        admin_view_user_id: int | None = None,
+    ) -> dict[str, Any]:
+        user = _get_current_user(request)
+        if not user:
+            raise HTTPException(status_code=401, detail="Autenticación requerida")
+        workspace_user_id = user.id
+        if admin_view_user_id and _is_superadmin(user):
+            target_user = get_user_by_id(admin_view_user_id)
+            if target_user:
+                workspace_user_id = target_user.id
+        data = get_dashboard_data(workspace_user_id, demand_status_filter=demand_status, offer_filter=offer_filter)
         return _to_json_ready(data)
+
+    @app.get("/api/workspace/stream")
+    async def workspace_stream(
+        request: Request,
+        demand_status: str = "active",
+        offer_filter: str = "visible",
+        admin_view_user_id: int | None = None,
+    ) -> StreamingResponse:
+        user = _get_current_user(request)
+        if not user:
+            raise HTTPException(status_code=401, detail="Autenticación requerida")
+
+        workspace_user_id = user.id
+        if admin_view_user_id and _is_superadmin(user):
+            target_user = get_user_by_id(admin_view_user_id)
+            if target_user:
+                workspace_user_id = target_user.id
+
+        async def event_stream():
+            last_payload = None
+            try:
+                while True:
+                    if await request.is_disconnected():
+                        break
+                    payload = _to_json_ready(
+                        get_dashboard_data(
+                            workspace_user_id,
+                            demand_status_filter=demand_status,
+                            offer_filter=offer_filter,
+                        )
+                    )
+                    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+                    if serialized != last_payload:
+                        yield _sse_event("workspace", serialized)
+                        last_payload = serialized
+                    else:
+                        yield ": keep-alive\n\n"
+                    await asyncio.sleep(8)
+            except asyncio.CancelledError:
+                return
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.post("/api/agent/demands/analyze")
+    async def agent_demands_analyze(
+        request: Request,
+        payload: AgentDemandAnalyzeRequest,
+        verbose: bool = False,
+    ) -> dict[str, Any]:
+        _require_api_user(request)
+        context = _build_agent_publication_context(agent, payload.text, payload.known_fields, verbose=verbose)
+        return _to_json_ready(context["payload"])
+
+    @app.post("/api/agent/demands/publish", status_code=status.HTTP_201_CREATED)
+    async def agent_demands_publish(
+        request: Request,
+        payload: AgentDemandPublishRequest,
+        verbose: bool = False,
+    ) -> JSONResponse:
+        api_user = _require_api_user(request)
+        context = _build_agent_publication_context(agent, payload.text, payload.known_fields, verbose=verbose)
+        analysis_payload = context["payload"]
+        if not analysis_payload.get("publish_ready"):
+            return JSONResponse(status_code=422, content=_to_json_ready(analysis_payload))
+
+        persisted = save_web_demand_from_agent(api_user.id, context["draft"], context["state"])
+        return JSONResponse(
+            status_code=status.HTTP_201_CREATED,
+            content=_to_json_ready(
+                {
+                    "status": "published",
+                    "demand": persisted.model_dump(mode="json"),
+                    "detail_url": f"/demands/{persisted.id}",
+                    "chats_url": f"/app/chats?demand_id={persisted.id}",
+                    "analysis": analysis_payload,
+                }
+            ),
+        )
 
     @app.post("/api/demands/{demand_id}/lifecycle")
     async def demand_lifecycle_api(
@@ -839,6 +1341,8 @@ def build_app() -> FastAPI:
         csrf_token: str = Form(...),
     ) -> dict[str, Any]:
         _validate_csrf(request, csrf_token)
+        if _is_admin_readonly_view(request):
+            raise HTTPException(status_code=403, detail="Vista solo lectura")
         user = _get_current_user(request)
         if not user:
             raise HTTPException(status_code=401, detail="Autenticación requerida")
@@ -857,6 +1361,8 @@ def build_app() -> FastAPI:
         csrf_token: str = Form(...),
     ) -> dict[str, Any]:
         _validate_csrf(request, csrf_token)
+        if _is_admin_readonly_view(request):
+            raise HTTPException(status_code=403, detail="Vista solo lectura")
         user = _get_current_user(request)
         if not user:
             raise HTTPException(status_code=401, detail="Autenticación requerida")
@@ -1063,7 +1569,8 @@ def build_app() -> FastAPI:
 
     @app.get("/demands/{demand_id}", response_class=HTMLResponse)
     async def demand_detail_page(request: Request, demand_id: int, offer_id: int | None = None) -> HTMLResponse:
-        current_user = _get_current_user(request)
+        actor_user = _get_current_user(request)
+        current_user = _get_display_user(request, actor_user)
         demand = get_demand_detail(demand_id, current_user.id if current_user else None)
         if not demand:
             raise HTTPException(status_code=404, detail="Demanda no encontrada")
@@ -1079,7 +1586,12 @@ def build_app() -> FastAPI:
                 owner_selected_offer_id = offers[0].id
         existing_thread = None
         if current_user and demand.get("viewer_has_offer") and demand.get("viewer_offer_id"):
-            existing_thread = get_offer_thread(demand["viewer_offer_id"], current_user.id)
+            existing_thread = get_offer_thread(
+                demand["viewer_offer_id"],
+                actor_user.id if actor_user else current_user.id,
+                participant_user_id=current_user.id,
+                mark_read=not _is_admin_readonly_view(request, actor_user),
+            )
         registry = get_master_schema_registry()
         schema = registry.resolve_intent_schema(demand.get("intent_type", ""))
         category_path = f"{registry.domains.get(schema.intent_domain, schema.intent_domain)} > {schema.display_name}"
@@ -1109,6 +1621,9 @@ def build_app() -> FastAPI:
         csrf_token: str = Form(...),
     ) -> RedirectResponse:
         _validate_csrf(request, csrf_token)
+        readonly_redirect = _reject_admin_readonly(request)
+        if readonly_redirect:
+            return readonly_redirect
         user = _get_current_user(request)
         target = redirect_to.strip() or f"/#demand-{demand_id}"
         if not user:
@@ -1149,6 +1664,9 @@ def build_app() -> FastAPI:
         csrf_token: str = Form(...),
     ) -> RedirectResponse:
         _validate_csrf(request, csrf_token)
+        readonly_redirect = _reject_admin_readonly(request)
+        if readonly_redirect:
+            return readonly_redirect
         user = _get_current_user(request)
         target = redirect_to.strip() or request.headers.get("referer") or f"/offers/{offer_id}"
         if not user:
@@ -1170,6 +1688,8 @@ def build_app() -> FastAPI:
         csrf_token: str = Form(...),
     ) -> dict[str, Any]:
         _validate_csrf(request, csrf_token)
+        if _is_admin_readonly_view(request):
+            raise HTTPException(status_code=403, detail="Vista solo lectura")
         user = _get_current_user(request)
         if not user:
             raise HTTPException(status_code=401, detail="Autenticación requerida")
@@ -1189,6 +1709,9 @@ def build_app() -> FastAPI:
         csrf_token: str = Form(...),
     ) -> RedirectResponse:
         _validate_csrf(request, csrf_token)
+        readonly_redirect = _reject_admin_readonly(request)
+        if readonly_redirect:
+            return readonly_redirect
         user = _get_current_user(request)
         if not user:
             _flash(request, "Necesitas iniciar sesión para borrar una demanda.", "error")
@@ -1208,6 +1731,9 @@ def build_app() -> FastAPI:
         csrf_token: str = Form(...),
     ) -> RedirectResponse:
         _validate_csrf(request, csrf_token)
+        readonly_redirect = _reject_admin_readonly(request)
+        if readonly_redirect:
+            return readonly_redirect
         user = _get_current_user(request)
         if not user:
             _flash(request, "Necesitas iniciar sesión para actualizar una demanda.", "error")
@@ -1262,9 +1788,11 @@ def build_app() -> FastAPI:
             full_name=full_name,
             avatar_url=profile.get("avatar_url"),
         )
+        if not user.is_active:
+            _flash(request, "Tu cuenta está desactivada. Contacta con administración si necesitas recuperarla.", "error")
+            return _redirect("/login")
         request.session["user_id"] = user.id
         redirect_target = _complete_pending_guest_publication(request, user) or "/app/chats"
-        _flash(request, f"Sesión iniciada con {SOCIAL_PROVIDERS[provider]['label']}.", "success")
         return _redirect(redirect_target)
 
     return app
@@ -1277,6 +1805,8 @@ def _build_oauth_registry():
     oauth = OAuth()
     enabled = {}
     for provider, config in SOCIAL_PROVIDERS.items():
+        if provider != "google":
+            continue
         client_id = os.getenv(f"{provider.upper()}_CLIENT_ID")
         client_secret = os.getenv(f"{provider.upper()}_CLIENT_SECRET")
         if not client_id or not client_secret:
@@ -1369,11 +1899,240 @@ async def _fetch_social_profile(client, provider: str, token: dict[str, Any]) ->
     raise HTTPException(status_code=400, detail="Proveedor OAuth no soportado")
 
 
+def _require_api_user(request: Request):
+    authorization = str(request.headers.get("authorization") or "").strip()
+    if not authorization.lower().startswith("bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Debes enviar Authorization: Bearer <api_token>",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    token = authorization.split(" ", 1)[1].strip()
+    if not token:
+        raise HTTPException(
+            status_code=401,
+            detail="Token de API vacío",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    user = authenticate_api_token(token)
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="Token de API inválido o revocado",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user
+
+
+def _build_agent_publication_context(
+    agent: DemandAgent,
+    raw_text: str,
+    known_fields: dict[str, Any] | None = None,
+    *,
+    verbose: bool = False,
+) -> dict[str, Any]:
+    original_text = str(raw_text or "").strip()
+    if len(original_text) < 4:
+        raise HTTPException(status_code=400, detail="El campo text debe contener la demanda original")
+    if known_fields is not None and not isinstance(known_fields, dict):
+        raise HTTPException(status_code=400, detail="known_fields debe ser un objeto JSON")
+
+    state = SessionState(
+        original_text=original_text,
+        known_fields=merge_known_fields({}, known_fields or {}),
+        summary=original_text,
+    )
+    try:
+        response = agent.analyze(state)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=f"No he podido analizar la demanda: {exc}") from exc
+
+    _apply_wizard_inference(state, response)
+    agent.update_state(state, response)
+    review_response, draft = _build_local_review_response(state)
+    state.intent_domain = review_response.intent_domain
+    state.intent_type = review_response.intent_type
+    state.summary = review_response.summary
+    state.known_fields = merge_known_fields(
+        state.known_fields,
+        review_response.known_fields,
+        review_response.attributes,
+        {"dates": review_response.dates},
+    )
+    field_errors = _field_errors_from_response(review_response, state)
+    field_entries = _build_field_entries(state, review_response, field_errors)
+    answered_fields = _collect_answered_fields(state, field_entries)
+    payload = _agent_publication_payload(state, review_response, draft, field_entries, answered_fields, verbose=verbose)
+    return {
+        "state": state,
+        "response": review_response,
+        "draft": draft,
+        "field_entries": field_entries,
+        "answered_fields": answered_fields,
+        "payload": payload,
+    }
+
+
+def _serialize_agent_field_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "field_name": entry.get("field_name", ""),
+        "field_label": entry.get("field_label", ""),
+        "question": entry.get("question", ""),
+        "placeholder": entry.get("placeholder", ""),
+        "examples": list(entry.get("examples", [])),
+        "current_value": entry.get("current_value"),
+        "issue_message": entry.get("issue_message", ""),
+        "is_additional_required": bool(entry.get("is_additional_required")),
+        "conditional_rule": entry.get("conditional_rule"),
+        "client_visible": bool(entry.get("client_visible", True)),
+        "control": entry.get("control", {}),
+    }
+
+
+def _compact_agent_field_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    control = dict(entry.get("control", {}) or {})
+    compact_control = {"kind": control.get("kind")}
+    if control.get("kind") == "select":
+        compact_control["options"] = control.get("options", [])
+        compact_control["value"] = control.get("value", "")
+    elif control.get("kind") in {"number", "integer", "date", "time", "datetime", "textarea", "budget_range"}:
+        if "value" in control:
+            compact_control["value"] = control.get("value")
+        if "min_value" in control:
+            compact_control["min_value"] = control.get("min_value")
+        if "max_value" in control:
+            compact_control["max_value"] = control.get("max_value")
+    elif control.get("kind") == "zone_selector":
+        zone_value = control.get("value") or {}
+        compact_control["value"] = {
+            "label": zone_value.get("label", ""),
+            "mode": zone_value.get("mode", ""),
+        }
+    return {
+        "field_name": entry.get("field_name", ""),
+        "field_label": entry.get("field_label", ""),
+        "question": entry.get("question", ""),
+        "placeholder": entry.get("placeholder", ""),
+        "examples": list(entry.get("examples", [])),
+        "current_value": entry.get("current_value"),
+        "issue_message": entry.get("issue_message", ""),
+        "control": compact_control,
+    }
+
+
+def _agent_publication_payload(
+    state: SessionState,
+    response: LLMResponse,
+    draft: DemandResult,
+    field_entries: list[dict[str, Any]],
+    answered_fields: list[dict[str, Any]],
+    *,
+    verbose: bool = False,
+) -> dict[str, Any]:
+    registry = get_master_schema_registry()
+    schema = registry.resolve_intent_schema(response.intent_type)
+    publish_ready = not response.required_missing_fields and not response.validation_issues
+    required_fields_full = [_serialize_agent_field_entry(entry) for entry in field_entries if entry.get("category") == "required"]
+    optional_fields_full = [_serialize_agent_field_entry(entry) for entry in field_entries if entry.get("category") == "optional"]
+    missing_or_invalid = set(response.required_missing_fields)
+    missing_or_invalid.update(
+        issue.get("field_name", "")
+        for issue in response.validation_issues
+        if issue.get("field_name")
+    )
+    fields_to_complete = [
+        _compact_agent_field_entry(entry)
+        for entry in field_entries
+        if entry.get("field_name") in missing_or_invalid
+    ]
+    payload = {
+        "status": "ready_to_publish" if publish_ready else "needs_input",
+        "publish_ready": publish_ready,
+        "original_text": state.original_text,
+        "summary": response.summary,
+        "intent_domain": response.intent_domain,
+        "intent_domain_display_name": registry.domains.get(schema.intent_domain, schema.intent_domain),
+        "intent_type": response.intent_type,
+        "intent_type_display_name": schema.display_name,
+        "next_question": response.next_question,
+        "next_question_field": response.next_question_field,
+        "required_missing_fields": list(response.required_missing_fields),
+        "recommended_missing_fields": list(response.recommended_missing_fields),
+        "validation_issues": list(response.validation_issues),
+        "known_fields": state.known_fields,
+        "fields_to_complete": fields_to_complete,
+        "publish_endpoint": "/api/agent/demands/publish",
+    }
+    if verbose:
+        payload.update(
+            {
+                "answered_fields": answered_fields,
+                "required_fields": required_fields_full,
+                "optional_fields": optional_fields_full,
+                "intent_schema": _raw_intent_schema_payload(response.intent_type),
+                "schema_outline": _schema_debug_outline(schema),
+                "normalized_draft": draft.model_dump(mode="json"),
+            }
+        )
+    return payload
+
+
+def _store_created_api_token(request: Request, name: str, plain_token: str) -> None:
+    request.session["_created_api_token"] = {"name": name, "token": plain_token}
+
+
+def _pop_created_api_token(request: Request) -> dict[str, str] | None:
+    payload = request.session.pop("_created_api_token", None)
+    if not isinstance(payload, dict):
+        return None
+    token = str(payload.get("token") or "").strip()
+    name = str(payload.get("name") or "").strip()
+    if not token:
+        return None
+    return {"name": name, "token": token}
+
+
 def _get_current_user(request: Request):
     user_id = request.session.get("user_id")
     if not user_id:
         return None
-    return get_user_by_id(user_id)
+    user = get_user_by_id(user_id)
+    if not user or not user.is_active:
+        request.session.pop("user_id", None)
+        return None
+    return user
+
+
+def _get_admin_view_user(request: Request, actor_user: Any | None = None):
+    actor = actor_user or _get_current_user(request)
+    if not _is_superadmin(actor):
+        request.session.pop("admin_view_user_id", None)
+        return None
+    view_user_id = request.session.get("admin_view_user_id")
+    if not view_user_id:
+        return None
+    if actor and int(view_user_id) == int(actor.id):
+        request.session.pop("admin_view_user_id", None)
+        return None
+    return get_user_by_id(int(view_user_id))
+
+
+def _get_display_user(request: Request, actor_user: Any | None = None):
+    actor = actor_user or _get_current_user(request)
+    return _get_admin_view_user(request, actor) or actor
+
+
+def _is_admin_readonly_view(request: Request, actor_user: Any | None = None) -> bool:
+    actor = actor_user or _get_current_user(request)
+    view_user = _get_admin_view_user(request, actor)
+    return bool(actor and view_user and int(view_user.id) != int(actor.id))
+
+
+def _reject_admin_readonly(request: Request) -> RedirectResponse | None:
+    if _is_admin_readonly_view(request):
+        _flash(request, "Estás navegando como otro usuario en modo solo lectura.", "error")
+        return _redirect(str(request.headers.get("referer") or "/"))
+    return None
 
 
 def _flash(request: Request, message: str, category: str = "info") -> None:
@@ -1414,9 +2173,7 @@ def _parse_zone_json(raw: str) -> Optional[dict[str, Any]]:
 def _zone_signature(zone: Optional[dict[str, Any]]) -> str:
     parsed = compact_zone_for_transport(zone or {}) or {}
     if not (
-        parsed.get("geojson")
-        or parsed.get("bbox")
-        or (
+        (
             parsed.get("center", {}).get("lat") is not None
             and parsed.get("center", {}).get("lon") is not None
         )
@@ -1754,30 +2511,105 @@ def _nominatim_result_label(item: dict[str, Any], fallback_query: str) -> str:
 def _enabled_social_providers() -> list[dict[str, str]]:
     providers = []
     for provider, config in SOCIAL_PROVIDERS.items():
+        if provider != "google":
+            continue
         if os.getenv(f"{provider.upper()}_CLIENT_ID") and os.getenv(f"{provider.upper()}_CLIENT_SECRET"):
             providers.append({"key": provider, "label": config["label"], "icon": config["icon"]})
     return providers
 
 
+def _app_base_url(request: Request | None = None) -> str:
+    configured = os.getenv("APP_BASE_URL", "").strip()
+    if configured:
+        return configured.rstrip("/")
+    if request is not None:
+        return str(request.base_url).rstrip("/")
+    return "http://127.0.0.1:8000"
+
+
+def _send_email_message(to_email: str, subject: str, body_text: str) -> bool:
+    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USERNAME", "").strip()
+    smtp_password = os.getenv("SMTP_PASSWORD", "")
+    smtp_from = os.getenv("SMTP_FROM", smtp_user or "doselevadoatres@gmail.com").strip()
+
+    if not smtp_user or not smtp_password:
+        logger.warning("SMTP no configurado; no se ha podido enviar email a %s", to_email)
+        return False
+
+    message = EmailMessage()
+    message["From"] = smtp_from
+    message["To"] = to_email
+    message["Subject"] = subject
+    message.set_content(body_text)
+
+    with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as smtp:
+        smtp.starttls()
+        smtp.login(smtp_user, smtp_password)
+        smtp.send_message(message)
+    return True
+
+
+def _mask_email_hint(email: str) -> str:
+    local, _, domain = (email or "").partition("@")
+    if not local or not domain:
+        return email
+    visible_local = local[:2]
+    masked_local = visible_local + "•" * max(1, len(local) - len(visible_local))
+    domain_name, dot, domain_tld = domain.partition(".")
+    visible_domain = (domain_name[:1] + "•" * max(1, len(domain_name) - 1)) if domain_name else domain
+    return f"{masked_local}@{visible_domain}{dot}{domain_tld}"
+
+
+def _is_superadmin(user: Any | None) -> bool:
+    return bool(user and getattr(user, "role", "") == "superadmin" and getattr(user, "is_active", False))
+
+
+def _require_superadmin(request: Request) -> Any | None:
+    user = _get_current_user(request)
+    if not _is_superadmin(user):
+        return None
+    return user
+
+
+def _require_superadmin_redirect(request: Request) -> RedirectResponse | None:
+    user = _get_current_user(request)
+    if not user:
+        _flash(request, "Necesitas iniciar sesión para acceder al área de administración.", "error")
+        return _redirect("/login")
+    if not _is_superadmin(user):
+        _flash(request, "Solo un superadministrador puede acceder a /admin.", "error")
+        return _redirect("/")
+    return None
+
+
 def _render(request: Request, template_name: str, context: dict[str, Any]) -> HTMLResponse:
-    current_user = _get_current_user(request)
-    wizard = _load_demand_wizard(request, current_user.id) if current_user else None
+    actor_user = _get_current_user(request)
+    current_user = _get_display_user(request, actor_user)
+    admin_view_target = _get_admin_view_user(request, actor_user)
+    admin_view_active = bool(actor_user and admin_view_target and actor_user.id != admin_view_target.id)
+    wizard = _load_demand_wizard(request, current_user.id) if current_user and not admin_view_active else None
     if wizard:
         wizard = _inflate_wizard_for_view(wizard)
     notification_summary = (
-        get_notification_summary(current_user.id) if current_user else {"my_demands_unread": 0, "my_offers_unread": 0, "items": []}
+        get_notification_summary(current_user.id) if current_user and not admin_view_active else {"my_demands_unread": 0, "my_offers_unread": 0, "items": []}
     )
     return templates.TemplateResponse(
         template_name,
         {
             "request": request,
             "current_user": current_user,
+            "actor_user": actor_user,
             "flash_messages": _pop_flashes(request),
             "csrf_token": _get_csrf_token(request),
             "oauth_providers": _enabled_social_providers(),
             "demand_wizard": wizard,
             "debug_normalization": _normalization_debug_enabled(),
             "notification_summary": notification_summary,
+            "admin_view_active": admin_view_active,
+            "admin_view_target": admin_view_target,
+            "admin_view_users": list_admin_users() if _is_superadmin(actor_user) else [],
             "demand_budget_display": _demand_budget_display,
             "page_kind": context.get("page_kind", "public"),
             "active_nav": context.get("active_nav", ""),
@@ -2207,6 +3039,12 @@ def _to_json_ready(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: _to_json_ready(item) for key, item in value.items()}
     return value
+
+
+def _sse_event(event_name: str, payload: str) -> str:
+    normalized_payload = str(payload or "").replace("\r\n", "\n").replace("\r", "\n")
+    body = "\n".join(f"data: {line}" for line in normalized_payload.split("\n"))
+    return f"event: {event_name}\n{body}\n\n"
 
 
 def _build_demands_workspace(demands: list[dict[str, Any]], selected_demand_id: int | None, selected_offer_id: int | None) -> dict[str, Any]:
@@ -2674,6 +3512,9 @@ def _apply_range_date_inference(state: SessionState, schema) -> None:
 def _infer_stay_date_range(raw_text: str, today: date | None = None) -> dict[str, str] | None:
     today = today or date.today()
     lowered = str(raw_text or "").strip().lower()
+    numeric_result = _infer_numeric_stay_date_range(lowered, today)
+    if numeric_result:
+        return numeric_result
     pattern = re.compile(
         r"\b(?:del?\s+)?(?P<start_day>\d{1,2})"
         r"(?:\s+de\s+(?P<start_month>[a-záéíóú]+))?"
@@ -2718,6 +3559,114 @@ def _infer_stay_date_range(raw_text: str, today: date | None = None) -> dict[str
         "checkin": checkin.isoformat(),
         "checkout": checkout.isoformat(),
     }
+
+
+def _infer_numeric_stay_date_range(lowered: str, today: date) -> dict[str, str] | None:
+    patterns = [
+        re.compile(
+            r"\b(?:del?\s+)?(?P<start>\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s+(?:al|hasta)\s+(?P<end>\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b"
+        ),
+        re.compile(
+            r"\b(?:del?\s+)?(?P<start>\d{1,2}[/-]\d{1,2})\s+(?:al|hasta)\s+(?P<end>\d{1,2}[/-]\d{1,2})(?:[/-](?P<year>\d{2,4}))?\b"
+        ),
+    ]
+    for pattern in patterns:
+        match = pattern.search(lowered)
+        if not match:
+            continue
+        if match.groupdict().get("start") and match.groupdict().get("end"):
+            start_raw = match.group("start")
+            end_raw = match.group("end")
+            trailing_year = match.groupdict().get("year")
+            parsed = _parse_numeric_date_range_values(start_raw, end_raw, trailing_year, today)
+            if parsed:
+                return parsed
+    return None
+
+
+def _parse_numeric_date_range_values(
+    start_raw: str,
+    end_raw: str,
+    trailing_year: str | None,
+    today: date,
+) -> dict[str, str] | None:
+    start_parts = [part for part in re.split(r"[/-]", start_raw) if part]
+    end_parts = [part for part in re.split(r"[/-]", end_raw) if part]
+    if len(start_parts) < 2 or len(end_parts) < 2:
+        return None
+
+    start_day = int(start_parts[0])
+    start_month = int(start_parts[1])
+    end_day = int(end_parts[0])
+    end_month = int(end_parts[1])
+    start_year = _coerce_year_component(start_parts[2], today.year) if len(start_parts) >= 3 else None
+    end_year = _coerce_year_component(end_parts[2], today.year) if len(end_parts) >= 3 else None
+    trailing = _coerce_year_component(trailing_year, today.year) if trailing_year else None
+
+    if start_year is None and end_year is not None:
+        start_year = end_year
+    if end_year is None and start_year is not None:
+        end_year = start_year
+    if start_year is None and end_year is None:
+        start_year = trailing or today.year
+        end_year = trailing or start_year
+
+    try:
+        checkin = date(start_year, start_month, start_day)
+        checkout = date(end_year, end_month, end_day)
+    except ValueError:
+        return None
+
+    if trailing_year is None and len(start_parts) < 3 and len(end_parts) < 3 and checkout < today:
+        try:
+            checkin = date(checkin.year + 1, checkin.month, checkin.day)
+            checkout = date(checkout.year + 1, checkout.month, checkout.day)
+        except ValueError:
+            return None
+
+    if checkout <= checkin:
+        corrected_checkout = _try_fix_checkout_year_typo(checkin, checkout, start_year, end_year, end_month, end_day)
+        if corrected_checkout is not None:
+            checkout = corrected_checkout
+        else:
+            return None
+
+    return {
+        "checkin": checkin.isoformat(),
+        "checkout": checkout.isoformat(),
+    }
+
+
+def _coerce_year_component(raw_year: str | None, default_year: int) -> int | None:
+    if raw_year is None:
+        return None
+    text = str(raw_year).strip()
+    if not text:
+        return None
+    value = int(text)
+    if len(text) == 2:
+        century = (default_year // 100) * 100
+        return century + value
+    return value
+
+
+def _try_fix_checkout_year_typo(
+    checkin: date,
+    checkout: date,
+    start_year: int,
+    end_year: int,
+    end_month: int,
+    end_day: int,
+) -> date | None:
+    if end_year != start_year - 1:
+        return None
+    try:
+        candidate = date(start_year, end_month, end_day)
+    except ValueError:
+        return None
+    if candidate > checkin:
+        return candidate
+    return None
 
 
 def _infer_people_from_text(raw_text: str) -> int | None:
@@ -3612,14 +4561,13 @@ def _compact_zone_for_session(zone: Any) -> dict[str, Any]:
     payload = normalize_zone_payload(zone if isinstance(zone, dict) else {})
     if not (
         payload.get("label")
-        or payload.get("geojson")
-        or payload.get("bbox")
         or (
             payload.get("center", {}).get("lat") is not None
             and payload.get("center", {}).get("lon") is not None
         )
     ):
         return default_zone_payload()
+    payload["bbox"] = None
     payload["geojson"] = None
     return payload
 

@@ -166,8 +166,14 @@ def run_web() -> None:
 
     host = os.getenv("WEB_HOST", "127.0.0.1")
     port = int(os.getenv("WEB_PORT", "8000"))
+    timeout_graceful_shutdown = int(os.getenv("WEB_GRACEFUL_SHUTDOWN_TIMEOUT", "2"))
     print(f"🌐 DMANDER web disponible en http://{host}:{port}")
-    uvicorn.run(app, host=host, port=port)
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        timeout_graceful_shutdown=timeout_graceful_shutdown,
+    )
 
 
 def main() -> None:
