@@ -85,7 +85,8 @@ from database import (
     update_web_demand_from_agent,
 )
 from demand_normalizer import build_normalized_demand, merge_known_fields
-from llm_client import OpenAIClient
+from embedding_service import describe_semantic_runtime
+from llm_client import OpenAIClient, describe_llm_runtime
 from master_schema import get_master_schema_registry
 from models import DemandResult, LLMResponse, SessionState
 from normalization_rules import dynamic_required_fields, get_field_prompt
@@ -2540,6 +2541,31 @@ def _require_superadmin_redirect(request: Request) -> RedirectResponse | None:
     return None
 
 
+def _ai_runtime_badge() -> dict[str, Any]:
+    try:
+        runtime = describe_semantic_runtime()
+    except Exception as exc:  # pragma: no cover
+        try:
+            fallback = describe_llm_runtime()
+        except Exception:
+            fallback = {"provider": "unknown", "model": "", "base_url": ""}
+        provider = str(fallback.get("provider") or "unknown")
+        provider_label = {
+            "ollama": "Ollama",
+            "openai": "OpenAI",
+            "lmstudio": "LM Studio",
+        }.get(provider, provider.title())
+        return {
+            "provider": provider,
+            "provider_label": provider_label,
+            "model": str(fallback.get("model") or ""),
+            "semantic_mode": "unknown",
+            "status_label": "Estado de IA no disponible",
+            "error": str(exc),
+        }
+    return runtime
+
+
 def _render(request: Request, template_name: str, context: dict[str, Any]) -> HTMLResponse:
     actor_user = _get_current_user(request)
     current_user = _get_display_user(request, actor_user)
@@ -2563,6 +2589,7 @@ def _render(request: Request, template_name: str, context: dict[str, Any]) -> HT
             "demand_wizard": wizard,
             "debug_normalization": _normalization_debug_enabled(),
             "notification_summary": notification_summary,
+            "ai_runtime": _ai_runtime_badge(),
             "admin_view_active": admin_view_active,
             "admin_view_target": admin_view_target,
             "admin_view_users": list_admin_users() if _is_superadmin(actor_user) else [],

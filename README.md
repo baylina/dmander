@@ -61,7 +61,10 @@ python3 main.py --cli
 ### Obligatorias para la base actual
 
 - `DATABASE_URL`
-- `OPENAI_API_KEY` para el flujo asistido por LLM
+- un proveedor LLM configurado:
+  - `LLM_PROVIDER=openai` + `OPENAI_API_KEY` o `LLM_API_KEY`
+  - o `LLM_PROVIDER=ollama`
+  - o `LLM_PROVIDER=lmstudio`
 - `TELEGRAM_BOT_TOKEN` si usas el bot
 - `DMANDER_MASTER_SCHEMA_PATH` para fijar el contrato maestro JSON activo
 
@@ -81,6 +84,44 @@ python3 main.py --cli
 - `APPLE_CLIENT_ID` / `APPLE_CLIENT_SECRET`
 
 Si un proveedor no está configurado, simplemente no aparece como opción en la pantalla de acceso.
+
+### Modelos locales
+
+DMANDER puede usar proveedores OpenAI-compatible para chat, embeddings y reranking.
+
+Ejemplo con `Ollama`:
+
+```env
+LLM_PROVIDER=ollama
+LLM_MODEL=qwen2.5:7b-instruct
+LLM_BASE_URL=http://127.0.0.1:11434/v1
+EMBEDDING_PROVIDER=ollama
+EMBEDDING_MODEL=nomic-embed-text
+RERANK_PROVIDER=ollama
+RERANK_MODEL=qwen2.5:7b-instruct
+```
+
+Ejemplo con `LM Studio`:
+
+```env
+LLM_PROVIDER=lmstudio
+LLM_MODEL=local-model
+LLM_BASE_URL=http://127.0.0.1:1234/v1
+EMBEDDING_PROVIDER=lmstudio
+EMBEDDING_MODEL=text-embedding-nomic-embed-text-v1.5
+RERANK_PROVIDER=lmstudio
+RERANK_MODEL=local-model
+```
+
+Si quieres mantener OpenAI solo para embeddings:
+
+```env
+LLM_PROVIDER=ollama
+LLM_MODEL=qwen2.5:7b-instruct
+LLM_BASE_URL=http://127.0.0.1:11434/v1
+EMBEDDING_PROVIDER=openai
+OPENAI_API_KEY=...
+```
 
 ## Esquema funcional
 

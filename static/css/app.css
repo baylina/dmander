@@ -3689,6 +3689,52 @@ body.has-zone-modal {
   flex-wrap: wrap;
 }
 
+.ai-runtime-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(21, 31, 38, 0.1);
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--text);
+  font-size: 0.84rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.ai-runtime-provider {
+  font-weight: 800;
+}
+
+.ai-runtime-status {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.ai-runtime-normal {
+  border-color: rgba(15, 125, 91, 0.24);
+  background: rgba(233, 248, 242, 0.9);
+}
+
+.ai-runtime-normal .ai-runtime-provider {
+  color: #0f7d5b;
+}
+
+.ai-runtime-degraded {
+  border-color: rgba(204, 112, 0, 0.22);
+  background: rgba(255, 244, 224, 0.92);
+}
+
+.ai-runtime-degraded .ai-runtime-provider {
+  color: #b86900;
+}
+
+.ai-runtime-unknown {
+  border-color: rgba(97, 108, 119, 0.18);
+  background: rgba(242, 244, 246, 0.92);
+}
+
 .hero-home {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);

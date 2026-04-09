@@ -36,6 +36,12 @@
       </nav>
 
       <div class="topbar-actions">
+        {% if ai_runtime %}
+          <div class="ai-runtime-badge ai-runtime-{{ ai_runtime.semantic_mode }}" title="{{ ai_runtime.model }}">
+            <span class="ai-runtime-provider">IA: {{ ai_runtime.provider_label }}</span>
+            <span class="ai-runtime-status">{{ ai_runtime.status_label }}</span>
+          </div>
+        {% endif %}
         {% if current_user %}
           <details class="user-menu" id="user-menu">
             <summary>{{ current_user.full_name }}</summary>

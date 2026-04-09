@@ -14,7 +14,9 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -666,6 +668,52 @@ def _semantic_match_score(row: dict[str, Any], query_embedding: list[float] | tu
     llm_metadata = dict(row.get("llm_metadata") or {})
     document_embedding = llm_metadata.get("search_embedding") or []
     return cosine_similarity(query_embedding, document_embedding)
+
+
+def _normalize_search_text(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    return text
+
+
+def _search_tokens(value: Any) -> list[str]:
+    normalized = _normalize_search_text(value)
+    if not normalized:
+        return []
+    tokens = re.findall(r"[a-z0-9]+", normalized)
+    return [token for token in tokens if len(token) >= 3]
+
+
+def _search_roots(value: Any) -> set[str]:
+    roots: set[str] = set()
+    for token in _search_tokens(value):
+        roots.add(token)
+        if token.endswith("es") and len(token) > 4:
+            roots.add(token[:-1])
+            roots.add(token[:-2])
+        elif token.endswith("s") and len(token) > 3:
+            roots.add(token[:-1])
+    return roots
+
+
+def _fallback_text_match_score(row: dict[str, Any], query_text: str) -> float:
+    query_normalized = _normalize_search_text(query_text)
+    document = _normalize_search_text(_demand_search_document(row))
+    if not query_normalized or not document:
+        return 0.0
+    if query_normalized in document:
+        return 1.0
+
+    query_roots = _search_roots(query_text)
+    document_roots = _search_roots(document)
+    if not query_roots or not document_roots:
+        return 0.0
+
+    overlap = len(query_roots & document_roots) / max(len(query_roots), 1)
+    return overlap if overlap >= 0.25 else 0.0
 
 
 def _location_shape_sql(alias: str) -> str:
@@ -1894,44 +1942,92 @@ def get_public_demands(
             if query_text.strip():
                 query_embedding = embed_query_text(query_text)
                 ranked_rows: list[dict[str, Any]] = []
-                for row in rows:
-                    score = _semantic_match_score(row, query_embedding)
-                    if score >= 0.12:
-                        row["_match_score"] = score
-                        ranked_rows.append(row)
-                ranked_rows = sorted(
-                    ranked_rows,
-                    key=lambda item: (
-                        float(item.get("_match_score", 0.0)),
-                        item.get("created_at") or datetime.min,
-                    ),
-                    reverse=True,
-                )
-                rerank_input = [
-                    {
-                        "id": row["id"],
-                        "summary": row.get("summary"),
-                        "text": row.get("original_text") or row.get("summary"),
-                    }
-                    for row in ranked_rows[:25]
-                ]
-                rerank_scores = rerank_demand_candidates(query_text, rerank_input)
-                if rerank_scores:
-                    filtered_rows: list[dict[str, Any]] = []
-                    for row in ranked_rows:
-                        rerank_score = float(rerank_scores.get(row["id"], 0.0))
-                        row["_rerank_score"] = rerank_score
-                        if rerank_score >= 0.22:
-                            filtered_rows.append(row)
+                rerank_already_applied = False
+                rerank_attempted = False
+
+                if query_embedding:
+                    for row in rows:
+                        score = _semantic_match_score(row, query_embedding)
+                        if score >= 0.12:
+                            row["_match_score"] = score
+                            ranked_rows.append(row)
                     ranked_rows = sorted(
-                        filtered_rows,
+                        ranked_rows,
                         key=lambda item: (
-                            float(item.get("_rerank_score", 0.0)),
                             float(item.get("_match_score", 0.0)),
                             item.get("created_at") or datetime.min,
                         ),
                         reverse=True,
                     )
+                else:
+                    rerank_input = [
+                        {
+                            "id": row["id"],
+                            "summary": row.get("summary"),
+                            "text": row.get("original_text") or row.get("summary"),
+                        }
+                        for row in rows[:120]
+                    ]
+                    rerank_attempted = True
+                    rerank_scores = rerank_demand_candidates(query_text, rerank_input)
+                    if rerank_scores:
+                        ranked_rows = []
+                        for row in rows:
+                            rerank_score = float(rerank_scores.get(row["id"], 0.0))
+                            if rerank_score >= 0.22:
+                                row["_rerank_score"] = rerank_score
+                                ranked_rows.append(row)
+                        ranked_rows = sorted(
+                            ranked_rows,
+                            key=lambda item: (
+                                float(item.get("_rerank_score", 0.0)),
+                                item.get("created_at") or datetime.min,
+                            ),
+                            reverse=True,
+                        )
+                        rerank_already_applied = True
+                    else:
+                        ranked_rows = []
+                        for row in rows:
+                            fallback_score = _fallback_text_match_score(row, query_text)
+                            if fallback_score > 0:
+                                row["_fallback_score"] = fallback_score
+                                ranked_rows.append(row)
+                        ranked_rows = sorted(
+                            ranked_rows,
+                            key=lambda item: (
+                                float(item.get("_fallback_score", 0.0)),
+                                item.get("created_at") or datetime.min,
+                            ),
+                            reverse=True,
+                        )
+
+                if ranked_rows and not rerank_already_applied and not rerank_attempted:
+                    rerank_input = [
+                        {
+                            "id": row["id"],
+                            "summary": row.get("summary"),
+                            "text": row.get("original_text") or row.get("summary"),
+                        }
+                        for row in ranked_rows[:25]
+                    ]
+                    rerank_scores = rerank_demand_candidates(query_text, rerank_input)
+                    if rerank_scores:
+                        filtered_rows: list[dict[str, Any]] = []
+                        for row in ranked_rows:
+                            rerank_score = float(rerank_scores.get(row["id"], 0.0))
+                            row["_rerank_score"] = rerank_score
+                            if rerank_score >= 0.22:
+                                filtered_rows.append(row)
+                        ranked_rows = sorted(
+                            filtered_rows,
+                            key=lambda item: (
+                                float(item.get("_rerank_score", 0.0)),
+                                float(item.get("_match_score", item.get("_fallback_score", 0.0))),
+                                item.get("created_at") or datetime.min,
+                            ),
+                            reverse=True,
+                        )
                 rows = ranked_rows
             if zone_filter:
                 rows = [row for row in rows if _matches_zone_filter(row, zone_filter)]
