@@ -19,55 +19,64 @@
         <span>dmander</span>
       </a>
 
-      <nav class="topnav topnav-primary" aria-label="Principal">
-        {% if current_user %}
-          <a href="/demands/new?fresh=1" class="{{ 'is-active' if active_nav == 'publish' else '' }}">Publicar</a>
-          <a href="/" class="{{ 'is-active' if active_nav == 'explore' else '' }}">Explorar</a>
-          <a href="/app/chats" class="nav-with-badge {{ 'is-active' if active_nav == 'app-chats' else '' }}">
-            <span>Mis chats</span>
-            {% set unread_total = notification_summary.my_demands_unread + notification_summary.my_offers_unread %}
-            <span class="badge nav-badge" id="nav-badge-total" {% if not unread_total %}hidden{% endif %}>{{ unread_total }}</span>
-          </a>
-        {% else %}
-          <a href="/" class="{{ 'is-active' if active_nav == 'explore' else '' }}">Explorar demandas</a>
-          <a href="/how-it-works" class="{{ 'is-active' if active_nav == 'how-it-works' else '' }}">Cómo funciona</a>
-          <a href="/demands/new?fresh=1" class="{{ 'is-active' if active_nav == 'publish' else '' }}">Publicar demanda</a>
-        {% endif %}
-      </nav>
+      <button
+        type="button"
+        class="mobile-nav-toggle"
+        data-mobile-nav-toggle
+        aria-expanded="false"
+        aria-controls="mobile-nav-panel"
+        aria-label="Abrir menú principal"
+      >
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
 
-      <div class="topbar-actions">
-        {% if ai_runtime %}
-          <div class="ai-runtime-badge ai-runtime-{{ ai_runtime.semantic_mode }}" title="{{ ai_runtime.model }}">
-            <span class="ai-runtime-provider">IA: {{ ai_runtime.provider_label }}</span>
-            <span class="ai-runtime-status">{{ ai_runtime.status_label }}</span>
-          </div>
-        {% endif %}
-        {% if current_user %}
-          <details class="user-menu" id="user-menu">
-            <summary>{{ current_user.full_name }}</summary>
-            <div class="user-menu-panel">
-              <div class="user-menu-head">
-                <strong>{{ current_user.full_name }}</strong>
-                <button type="button" class="user-menu-close" data-user-menu-close aria-label="Cerrar menú">×</button>
+      <div class="topbar-panel" id="mobile-nav-panel" data-mobile-nav-panel>
+        <nav class="topnav topnav-primary" aria-label="Principal">
+          {% if current_user %}
+            <a href="/demands/new?fresh=1" class="{{ 'is-active' if active_nav == 'publish' else '' }}">Publicar</a>
+            <a href="/" class="{{ 'is-active' if active_nav == 'explore' else '' }}">Explorar</a>
+            <a href="/app/chats" class="nav-with-badge {{ 'is-active' if active_nav == 'app-chats' else '' }}">
+              <span>Mis chats</span>
+              {% set unread_total = notification_summary.my_demands_unread + notification_summary.my_offers_unread %}
+              <span class="badge nav-badge" id="nav-badge-total" {% if not unread_total %}hidden{% endif %}>{{ unread_total }}</span>
+            </a>
+          {% else %}
+            <a href="/" class="{{ 'is-active' if active_nav == 'explore' else '' }}">Explorar demandas</a>
+            <a href="/how-it-works" class="{{ 'is-active' if active_nav == 'how-it-works' else '' }}">Cómo funciona</a>
+            <a href="/demands/new?fresh=1" class="{{ 'is-active' if active_nav == 'publish' else '' }}">Publicar demanda</a>
+          {% endif %}
+        </nav>
+
+        <div class="topbar-actions">
+          {% if current_user %}
+            <details class="user-menu" id="user-menu">
+              <summary>{{ current_user.full_name }}</summary>
+              <div class="user-menu-panel">
+                <div class="user-menu-head">
+                  <strong>{{ current_user.full_name }}</strong>
+                  <button type="button" class="user-menu-close" data-user-menu-close aria-label="Cerrar menú">×</button>
+                </div>
+                <a class="menu-action" href="/app/chats">Mis chats</a>
+                <a class="menu-action" href="/app/filters">Mis filtros</a>
+                {% if not admin_view_active %}
+                  <a class="menu-action" href="/account/security">Seguridad</a>
+                {% endif %}
+                {% if actor_user and actor_user.role == "superadmin" %}
+                  <a class="menu-action" href="/admin">Administración</a>
+                {% endif %}
+                <form action="/logout" method="post">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <button class="menu-action" type="submit">Cerrar sesión</button>
+                </form>
               </div>
-              <a class="menu-action" href="/app/chats">Mis chats</a>
-              <a class="menu-action" href="/app/filters">Mis filtros</a>
-              {% if not admin_view_active %}
-                <a class="menu-action" href="/account/security">Seguridad</a>
-              {% endif %}
-              {% if actor_user and actor_user.role == "superadmin" %}
-                <a class="menu-action" href="/admin">Administración</a>
-              {% endif %}
-              <form action="/logout" method="post">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <button class="menu-action" type="submit">Cerrar sesión</button>
-              </form>
-            </div>
-          </details>
-        {% else %}
-          <a href="/login" class="button button-ghost">Acceder</a>
-          <a href="/demands/new?fresh=1" class="button button-primary">Empezar gratis</a>
-        {% endif %}
+            </details>
+          {% else %}
+            <a href="/login" class="button button-ghost">Acceder</a>
+            <a href="/demands/new?fresh=1" class="button button-primary">Empezar gratis</a>
+          {% endif %}
+        </div>
       </div>
     </header>
 
@@ -104,6 +113,46 @@
     <main class="page-main">
       {% block content %}{% endblock %}
     </main>
+
+    <footer class="site-footer">
+      <div class="site-footer-brand">
+        <a href="/" class="brand site-footer-logo">
+          <img src="{{ request.url_for('static', path='img/logo.svg') }}" alt="dmander">
+          <span>dmander</span>
+        </a>
+      </div>
+
+      <div class="site-footer-grid">
+        <section class="site-footer-column">
+          <h2>Producto</h2>
+          <a href="/">Explorar demandas</a>
+          <a href="/demands/new?fresh=1">Publicar demanda</a>
+          <a href="/api-plans">API Plans</a>
+        </section>
+
+        <section class="site-footer-column">
+          <h2>Carreras</h2>
+          <a href="/we-are-hiring">We are hiring</a>
+          <a href="/how-it-works">Cómo funciona</a>
+        </section>
+
+        <section class="site-footer-column">
+          <h2>Legal</h2>
+          <a href="/privacy-policy">Política de Privacidad</a>
+          <a href="/terms-of-service">Condiciones del Servicio</a>
+          {% if current_user %}
+            <a href="/account/security">Seguridad</a>
+          {% else %}
+            <a href="/login">Acceder</a>
+          {% endif %}
+        </section>
+      </div>
+
+      <div class="site-footer-bottom">
+        <span>© dmander</span>
+        <span>Marketplace de intención y conversación</span>
+      </div>
+    </footer>
   </div>
 
   {% if debug_normalization %}
@@ -281,6 +330,47 @@
     });
 
     (() => {
+      const topbar = document.querySelector('.topbar');
+      const mobileNavToggle = document.querySelector('[data-mobile-nav-toggle]');
+      const mobileNavPanel = document.querySelector('[data-mobile-nav-panel]');
+      const closeMobileNav = () => {
+        if (!topbar || !mobileNavToggle) return;
+        topbar.classList.remove('is-mobile-open');
+        mobileNavToggle.setAttribute('aria-expanded', 'false');
+      };
+
+      if (topbar && mobileNavToggle && mobileNavPanel) {
+        mobileNavToggle.addEventListener('click', () => {
+          const willOpen = !topbar.classList.contains('is-mobile-open');
+          topbar.classList.toggle('is-mobile-open', willOpen);
+          mobileNavToggle.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+        });
+
+        document.addEventListener('click', (event) => {
+          if (!topbar.classList.contains('is-mobile-open')) return;
+          if (topbar.contains(event.target)) return;
+          closeMobileNav();
+        });
+
+        document.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape') {
+            closeMobileNav();
+          }
+        });
+
+        mobileNavPanel.querySelectorAll('a, button[type="submit"]').forEach((element) => {
+          element.addEventListener('click', () => {
+            closeMobileNav();
+          });
+        });
+
+        window.addEventListener('resize', () => {
+          if (window.innerWidth > 860) {
+            closeMobileNav();
+          }
+        });
+      }
+
       const userMenu = document.getElementById('user-menu');
       if (!userMenu) return;
       const closeUserMenu = () => {

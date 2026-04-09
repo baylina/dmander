@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="section-head legal-head">
+  <div>
+    {% if page_eyebrow %}
+      <p class="eyebrow">{{ page_eyebrow }}</p>
+    {% endif %}
+    <h1>{{ page_heading }}</h1>
+    {% if page_intro %}
+      <p class="section-note">{{ page_intro }}</p>
+    {% endif %}
+    {% if page_updated_at %}
+      <p class="legal-updated">Última actualización: {{ page_updated_at }}</p>
+    {% endif %}
+  </div>
+</section>
+
+<article class="card legal-page">
+  {% for paragraph in page_lead %}
+    <p class="legal-lead">{{ paragraph }}</p>
+  {% endfor %}
+
+  <div class="legal-page-body">
+    {% for section in legal_sections %}
+      <section class="legal-section">
+        <h2>{{ section.title }}</h2>
+        {% for paragraph in section.paragraphs %}
+          <p>{{ paragraph }}</p>
+        {% endfor %}
+      </section>
+    {% endfor %}
+  </div>
+</article>
+{% endblock %}

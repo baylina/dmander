@@ -15,10 +15,26 @@
       <div class="activity-card-top">
         <span class="pill">Filtro</span>
       </div>
-      <strong>{{ item.name }}</strong>
+      <form action="/filters" method="post" class="saved-filter-manage-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="filter_id" value="{{ item.id }}">
+        <input type="hidden" name="save_mode" value="update">
+        <input type="hidden" name="query_text" value="{{ item.query_text or '' }}">
+        <input type="hidden" name="location" value="{{ item.location or '' }}">
+        <input type="hidden" name="location_zone_json" value='{{ item.location_json | tojson }}'>
+        <input type="text" name="name" value="{{ item.name }}" required>
+        <button type="submit" class="button button-ghost">Guardar cambios</button>
+      </form>
       <p class="muted">{{ item.query_text or "Sin texto" }}</p>
+      {% if item.location_label or item.location %}
+        <p class="small-note">{{ item.location_label or item.location }}</p>
+      {% endif %}
       <div class="activity-card-actions">
         <a href="/?saved_filter_id={{ item.id }}" class="button button-primary">Ejecutar</a>
+        <form action="/filters/{{ item.id }}/delete" method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="button button-ghost">Eliminar</button>
+        </form>
       </div>
     </article>
   {% else %}

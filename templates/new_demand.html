@@ -42,14 +42,17 @@
       <p class="muted">Tu demanda ya está preparada. Solo falta crear tu cuenta o iniciar sesión para publicarla y empezar a recibir respuestas.</p>
     {% elif is_review_step %}
       <p class="muted">{{ active_wizard.published_message or "Tu demanda ya está visible y lista para recibir respuestas." }}</p>
-    {% elif page_note %}
+    {% elif page_note and wizard_step not in ["text", "questions"] %}
       <p class="muted">{{ page_note }}</p>
     {% endif %}
 
     {% if not active_wizard or wizard_step == "text" %}
-      <form action="{{ submit_action or '/demands' }}" method="post" class="form-stack js-busy-form">
+      <form action="{{ submit_action or '/demands' }}" method="post" class="form-stack js-busy-form demand-entry-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <textarea name="demand_text" rows="7" maxlength="200" placeholder="Escribe aquí cualquier producto o servicio que necesites en este momento" required>{{ initial_text or '' }}</textarea>
+        <div class="demand-textarea-wrap">
+          <textarea name="demand_text" rows="4" placeholder="Escribe aquí cualquier producto o servicio que necesites en este momento" required data-demand-text-limit="200">{{ initial_text or '' }}</textarea>
+          <div class="demand-text-counter" data-demand-text-counter>200 caracteres disponibles</div>
+        </div>
         <button type="submit" class="button button-primary" data-busy-text="Analizando...">
           <span class="button-label">{{ submit_label or "Analizar y continuar" }}</span>
           <span class="button-spinner" aria-hidden="true"></span>
@@ -71,7 +74,7 @@
 
         <div class="wizard-panel">
           <div class="wizard-block">
-            <span class="detail-label">Texto original de la demanda</span>
+            <span class="detail-label wizard-inline-note">{{ page_note | safe }}</span>
             <textarea name="demand_text" rows="6" maxlength="200" placeholder="Describe tu necesidad con tus palabras" required>{{ active_wizard.state.original_text }}</textarea>
           </div>
         </div>
@@ -124,20 +127,6 @@
           </div>
         </div>
 
-        {% if active_wizard.suggested_missing_details %}
-          <div class="wizard-panel">
-            <div class="wizard-block">
-              <span class="detail-label">Sugerencias para mejorar el texto</span>
-              <p class="muted compact">No son obligatorias. Si te encaja, puedes añadirlas directamente en el texto de la demanda.</p>
-              <ul class="entry-steps">
-                {% for item in active_wizard.suggested_missing_details %}
-                  <li>{{ item }}</li>
-                {% endfor %}
-              </ul>
-            </div>
-          </div>
-        {% endif %}
-
         <div class="wizard-actions">
           <button type="submit" class="button button-secondary" formaction="/demands/wizard/edit-text" formnovalidate>
             Volver atrás
@@ -167,16 +156,6 @@
               </div>
             {% endif %}
           </div>
-          {% if active_wizard.suggested_missing_details %}
-            <div class="wizard-block">
-              <span class="detail-label">Sugerencias detectadas</span>
-              <ul class="entry-steps">
-                {% for item in active_wizard.suggested_missing_details %}
-                  <li>{{ item }}</li>
-                {% endfor %}
-              </ul>
-            </div>
-          {% endif %}
         </div>
       </div>
 
@@ -263,6 +242,29 @@
 </section>
 
 <script>
+  (() => {
+    const textarea = document.querySelector('[data-demand-text-limit]');
+    const counter = document.querySelector('[data-demand-text-counter]');
+    const form = textarea?.closest('form');
+    const submitButton = form?.querySelector('button[type="submit"]');
+    if (!textarea || !counter) return;
+
+    const syncCounter = () => {
+      const limit = Number(textarea.dataset.demandTextLimit || '200');
+      const remaining = limit - textarea.value.length;
+      const exceeded = remaining < 0;
+      counter.textContent = exceeded
+        ? `${Math.abs(remaining)} caracteres por encima del máximo`
+        : `${remaining} caracteres disponibles`;
+      counter.classList.toggle('is-exceeded', exceeded);
+      textarea.classList.toggle('is-over-limit', exceeded);
+      if (submitButton) submitButton.disabled = exceeded;
+    };
+
+    textarea.addEventListener('input', syncCounter);
+    syncCounter();
+  })();
+
   (() => {
     const root = document.querySelector('[data-auth-gate-root]');
     if (!root) return;

@@ -58,7 +58,7 @@
   const normalizeRadius = (bucket) => radiusOptions[bucket] || radiusOptions["10km"];
   const truncateLabel = (value, maxLength = 20) => {
     const text = String(value || "").trim();
-    if (!text) return "Área administrativa";
+    if (!text) return "";
     return text.length > maxLength ? `${text.slice(0, maxLength).trimEnd()}...` : text;
   };
   const zoneSummaryLabel = (payload, placeholder) => {
@@ -208,7 +208,6 @@
     const modalApplyButton = root.querySelector("[data-zone-apply-modal]");
     const modalClearButton = root.querySelector("[data-zone-modal-clear]");
     const radiusPanel = root.querySelector("[data-zone-radius-panel]");
-    const modeButtons = root.querySelectorAll("[data-zone-mode]");
     const radiusHint = root.querySelector("[data-zone-radius-hint]");
     const radiusInputs = root.querySelectorAll("[data-zone-radius-option]");
     let zone = Object.assign(defaultZone(), parseJson(root.dataset.currentZone || "{}", {}));
@@ -309,14 +308,6 @@
       if (radiusHint) {
         radiusHint.hidden = isArea;
       }
-      const areaButton = root.querySelector('[data-zone-mode="area"]');
-      if (areaButton) {
-        const areaLabel = adminZoneCache?.label || (zone.mode === "area" ? zone.label : "");
-        areaButton.textContent = truncateLabel(areaLabel);
-      }
-      modeButtons.forEach((button) => {
-        button.classList.toggle("is-active", button.dataset.zoneMode === preferredMode);
-      });
     };
 
     const syncHiddenFields = () => {
@@ -640,65 +631,6 @@
         zone.admin_level = "";
         manualZoneCache = JSON.parse(JSON.stringify(zone));
         drawZone();
-      });
-    });
-
-    modeButtons.forEach((button) => {
-      button.addEventListener("click", () => {
-        const targetMode = button.dataset.zoneMode;
-        if (targetMode === "area") {
-          preferredMode = "area";
-          if (zone.mode === "radius_from_point" && (zone.center?.lat != null || zone.label)) {
-            manualZoneCache = JSON.parse(JSON.stringify(zone));
-          }
-          if (adminZoneCache) {
-            zone = JSON.parse(JSON.stringify(adminZoneCache));
-          }
-          if (collapsibleMap) {
-            mapPanel?.classList.remove("is-collapsed");
-          }
-          drawZone();
-          window.setTimeout(() => {
-            map.invalidateSize();
-            drawZone();
-          }, 80);
-          return;
-        }
-
-        preferredMode = "radius";
-        if (zone.mode === "area") {
-          adminZoneCache = JSON.parse(JSON.stringify(zone));
-        }
-        const previousMapCenter = map.getCenter();
-        const previousMapZoom = map.getZoom();
-        if (zone.mode === "area") {
-          zone = deriveRadiusZoneFromArea(zone);
-          zone.label = "Área personalizada";
-          zone.raw_query = "Área personalizada";
-          manualZoneCache = JSON.parse(JSON.stringify(zone));
-        } else {
-          zone = manualZoneCache ? JSON.parse(JSON.stringify(manualZoneCache)) : defaultZone();
-          zone.mode = "radius_from_point";
-          zone.geojson = null;
-          zone.bbox = null;
-          zone.admin_level = "";
-          zone.label = "Área personalizada";
-          zone.raw_query = "Área personalizada";
-        }
-        if (searchInput) {
-          searchInput.value = "Área personalizada";
-        }
-        hiddenLabel.value = "Área personalizada";
-        if (collapsibleMap) {
-          mapPanel?.classList.remove("is-collapsed");
-        }
-        drawZone();
-        window.setTimeout(() => {
-          map.invalidateSize();
-          if (previousMapCenter && Number.isFinite(previousMapZoom)) {
-            map.setView(previousMapCenter, previousMapZoom);
-          }
-        }, 80);
       });
     });
 

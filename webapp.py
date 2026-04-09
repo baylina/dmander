@@ -33,6 +33,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from psycopg2 import IntegrityError
+from markupsafe import Markup, escape
 from starlette.middleware.sessions import SessionMiddleware
 
 from agent import DemandAgent
@@ -246,6 +247,8 @@ Reglas:
 - Si el precio no está claro, usa budget_max = null y budget_unit = total.
 - No incluyas nunca en suggested_missing_details sugerencias sobre ubicación, ciudad, zona, provincia, mapa, presupuesto, precio o importe, porque esos atributos ya se revisan aparte en la aplicación.
 - suggested_missing_details debe contener como máximo 4 elementos, redactados en el idioma original del texto.
+- Si el texto es demasiado genérico, ambiguo o no describe una necesidad concreta, suggested_missing_details no puede ser [].
+- En esos casos prioriza sugerencias que ayuden a concretar qué producto o servicio se necesita y qué características o condiciones son importantes.
 - Si el texto ya está suficientemente claro, suggested_missing_details puede ser [].
 """.strip()
 
@@ -287,10 +290,16 @@ def build_app() -> FastAPI:
         current_user = _get_display_user(request)
         current_saved_filter = None
         selected_saved_filter_id = int(saved_filter_id) if str(saved_filter_id).strip().isdigit() else None
+        requested_zone_filter = _parse_zone_json(location_zone_json)
+        has_requested_zone_filter = bool(
+            requested_zone_filter
+            and requested_zone_filter.get("center", {}).get("lat") is not None
+            and requested_zone_filter.get("center", {}).get("lon") is not None
+        )
         has_explicit_search_inputs = bool(
             q.strip()
             or location.strip()
-            or location_zone_json.strip()
+            or has_requested_zone_filter
             or location_label.strip()
             or location_lat is not None
             or location_lon is not None
@@ -312,7 +321,7 @@ def build_app() -> FastAPI:
                 location_radius_bucket = current_saved_filter.get("location_radius_bucket", "")
                 location_source = current_saved_filter.get("location_source", "")
                 location_raw_query = current_saved_filter.get("location_raw_query", "")
-        zone_filter = _parse_zone_json(location_zone_json)
+        zone_filter = requested_zone_filter
         if not zone_filter and (location_lat is not None and location_lon is not None):
             zone_filter = normalize_zone_payload(
                 {
@@ -353,7 +362,7 @@ def build_app() -> FastAPI:
                 demand for demand in all_demands
                 if zone_has_geometry(demand.location_json) and zones_intersect(demand.location_json, zone_filter)
             ]
-        page_size = 50
+        page_size = 40
         total_count = len(all_demands)
         total_pages = max(1, (total_count + page_size - 1) // page_size)
         page = min(max(page, 1), total_pages)
@@ -708,6 +717,382 @@ def build_app() -> FastAPI:
                 "active_nav": "how-it-works",
                 "page_kind": "public",
             },
+        )
+
+    def _info_page_context(
+        title: str,
+        eyebrow: str,
+        heading: str,
+        intro: str,
+        *,
+        feature_cards: list[dict[str, Any]] | None = None,
+        detail_blocks: list[dict[str, str]] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "title": title,
+            "active_nav": "",
+            "page_kind": "public",
+            "page_eyebrow": eyebrow,
+            "page_heading": heading,
+            "page_intro": intro,
+            "feature_cards": feature_cards or [],
+            "detail_blocks": detail_blocks or [],
+        }
+
+    def _legal_page_context(
+        title: str,
+        eyebrow: str,
+        heading: str,
+        intro: str,
+        *,
+        lead: list[str] | None = None,
+        sections: list[dict[str, Any]] | None = None,
+        updated_at: str = "9 de abril de 2026",
+    ) -> dict[str, Any]:
+        return {
+            "title": title,
+            "active_nav": "",
+            "page_kind": "public",
+            "page_eyebrow": eyebrow,
+            "page_heading": heading,
+            "page_intro": intro,
+            "page_lead": lead or [],
+            "legal_sections": sections or [],
+            "page_updated_at": updated_at,
+        }
+
+    @app.get("/about-us", response_class=HTMLResponse)
+    async def about_us_page(request: Request) -> HTMLResponse:
+        return _render(
+            request,
+            "info_page.html",
+            _info_page_context(
+                "Sobre Nosotros",
+                "Sobre Nosotros",
+                "Queremos que pedir algo online sea tan simple como explicarlo bien.",
+                "dmander nace para conectar necesidades reales con personas o negocios que pueden responderlas sin obligar a nadie a navegar formularios complejos.",
+                feature_cards=[
+                    {
+                        "eyebrow": "Nuestra idea",
+                        "title": "Texto libre, contexto real y conversación directa.",
+                        "body": "Creemos que muchas necesidades se expresan mejor en lenguaje natural que dentro de una categoría rígida. Por eso la experiencia empieza con una frase libre y termina en una conversación útil.",
+                    },
+                    {
+                        "eyebrow": "Lo que buscamos",
+                        "title": "Menos fricción para publicar, más claridad para responder.",
+                        "body": "Queremos que quien necesita algo publique rápido, y que quien puede ofrecer una solución encuentre oportunidades relevantes sin perder tiempo.",
+                    },
+                ],
+                detail_blocks=[
+                    {
+                        "title": "Marketplace de intención",
+                        "body": "La plataforma gira en torno a lo que una persona necesita realmente ahora, no alrededor de un catálogo fijo.",
+                    },
+                    {
+                        "title": "Experiencia ligera",
+                        "body": "Ubicación y precio siguen disponibles, pero sin convertir la publicación en un formulario interminable.",
+                    },
+                    {
+                        "title": "Conversación útil",
+                        "body": "Cuando una respuesta encaja, el siguiente paso natural es hablar y concretar por chat.",
+                    },
+                ],
+            ),
+        )
+
+    @app.get("/we-are-hiring", response_class=HTMLResponse)
+    async def we_are_hiring_page(request: Request) -> HTMLResponse:
+        return _render(
+            request,
+            "info_page.html",
+            _info_page_context(
+                "We are hiring",
+                "We are hiring",
+                "Nos interesa conocer personas con criterio técnico y ambición de producto.",
+                "En este momento no hay ninguna posición abierta publicada, pero seguimos abiertos a escuchar candidaturas con buena trayectoria y afinidad clara con el proyecto.",
+                feature_cards=[
+                    {
+                        "eyebrow": "Perfiles que nos interesan",
+                        "title": "Ingeniería, IA aplicada y perfiles de crecimiento con experiencia.",
+                        "items": [
+                            "Ingenieros e ingenieras de software con mentalidad de producto.",
+                            "IA engineers capaces de llevar modelos a flujos útiles y usables.",
+                            "Growth marketers o business developers con experiencia real.",
+                        ],
+                    },
+                    {
+                        "eyebrow": "Cómo contactarnos",
+                        "title": "Envíanos tu candidatura aunque no haya vacante abierta.",
+                        "body": "Si te interesa el proyecto, envía tu CV y una carta de motivación a info@dmander.com explicando por qué crees que podrías aportar valor.",
+                        "cta_href": "mailto:info@dmander.com?subject=Candidatura%20dmander",
+                        "cta_label": "Escribir a info@dmander.com",
+                        "cta_variant": "button-primary",
+                    },
+                ],
+                detail_blocks=[
+                    {
+                        "title": "Sin proceso abierto formal",
+                        "body": "La existencia de esta página no implica una oferta de empleo abierta ni una obligación de respuesta por parte de dmander.",
+                    },
+                    {
+                        "title": "Qué valoramos",
+                        "body": "Buscamos personas con criterio, capacidad de ejecución y sensibilidad por construir productos simples, directos y bien resueltos.",
+                    },
+                    {
+                        "title": "Qué enviar",
+                        "body": "La candidatura ideal incluye CV y una carta breve de motivación explicando encaje, experiencia y el tipo de contribución que te gustaría hacer.",
+                    },
+                ],
+            ),
+        )
+
+    @app.get("/privacy-policy", response_class=HTMLResponse)
+    async def privacy_policy_page(request: Request) -> HTMLResponse:
+        return _render(
+            request,
+            "legal_page.html",
+            _legal_page_context(
+                "Política de Privacidad",
+                "Política de Privacidad",
+                "Tratamos datos personales en la medida razonablemente necesaria para operar la plataforma, mejorar el producto, proteger la seguridad del servicio y gestionar la relación con quienes acceden, publican, responden o interactúan dentro de dmander.",
+                "Este documento describe de forma amplia cómo recopilamos, usamos, almacenamos, compartimos y protegemos información vinculada a cuentas, publicaciones, conversaciones, integraciones y uso general del servicio.",
+                lead=[
+                    "El acceso, uso o permanencia en dmander implica la lectura y aceptación de esta política en su versión vigente. Si una persona no está de acuerdo con alguno de sus extremos, debe abstenerse de utilizar la plataforma o dejar de usarla inmediatamente.",
+                    "Esta política está redactada para explicar el tratamiento de datos de un modo comprensible, pero también para dejar claro que dmander opera una infraestructura digital con componentes propios y de terceros, y que determinadas operaciones técnicas, de seguridad, moderación, analítica, automatización o mejora del producto pueden requerir el tratamiento de información facilitada por los propios usuarios o generada a partir del uso del servicio.",
+                ],
+                sections=[
+                    {
+                        "title": "1. Responsable y alcance del tratamiento",
+                        "paragraphs": [
+                            "dmander actúa como responsable del tratamiento en relación con los datos personales que recaba directamente para la creación de cuentas, autenticación, publicación de demandas, intercambio de mensajes, soporte, prevención de abuso, seguridad, funcionamiento operativo y evolución del producto. Determinados terceros proveedores podrán intervenir como encargados o prestadores de servicios vinculados a infraestructura, autenticación, analítica, correo, mensajería, modelos de IA, mapas, observabilidad o almacenamiento.",
+                            "El tratamiento se limita a la información necesaria o útil para prestar el servicio, operar la plataforma, mantener la seguridad, detectar fraude, moderar abusos, cumplir obligaciones legales, defender intereses legítimos y optimizar la experiencia del usuario. Ello incluye tratamientos automatizados, enriquecimientos derivados del texto aportado y señales técnicas vinculadas al comportamiento dentro del servicio.",
+                        ],
+                    },
+                    {
+                        "title": "2. Información que podemos recopilar",
+                        "paragraphs": [
+                            "Podemos recopilar datos identificativos y de contacto, como nombre, email, alias, credenciales, identificadores de inicio de sesión de terceros, identificadores de Telegram, dirección IP, metadatos de acceso, datos del navegador, dispositivo o sesión, y cualquier otro dato que la persona introduzca al registrarse, autenticarse, completar un perfil, publicar una demanda, responder a otra persona o contactar con soporte.",
+                            "También podremos recopilar el contenido generado por el usuario, incluidas demandas, ofertas, mensajes, textos libres, precios, ubicaciones, observaciones, respuestas, archivos o elementos análogos. La persona usuaria es responsable de no introducir datos excesivos, información especialmente sensible o datos de terceros sin una base legítima suficiente.",
+                        ],
+                    },
+                    {
+                        "title": "3. Datos inferidos, normalizados o enriquecidos",
+                        "paragraphs": [
+                            "La plataforma puede inferir, normalizar, resumir o enriquecer ciertos atributos a partir del texto original o del comportamiento de uso, como una ubicación aproximada, un precio máximo, señales de relevancia, resúmenes, sugerencias de mejora del texto, indicadores internos de búsqueda o cualquier otra información útil para operar el producto.",
+                            "Estas operaciones pueden apoyarse en modelos de IA, sistemas automatizados, embeddings, motores de ranking, capas heurísticas, geocodificación y servicios de terceros. Tales procesos pueden no ser perfectos, pueden contener errores y no generan por sí solos derechos del usuario a exigir exactitud absoluta, ausencia de sesgo, exhaustividad o disponibilidad continuada.",
+                        ],
+                    },
+                    {
+                        "title": "4. Finalidades del tratamiento",
+                        "paragraphs": [
+                            "Utilizamos los datos para crear y administrar cuentas, prestar las funcionalidades principales del servicio, permitir la publicación de demandas, facilitar respuestas y conversaciones, mostrar información relevante, gestionar filtros, habilitar notificaciones, mantener sesiones autenticadas y posibilitar el acceso a funcionalidades web, API o integraciones externas.",
+                            "Además, podremos tratar datos para fines de seguridad, monitorización, auditoría, prevención de fraude, control de abuso, moderación, resolución de incidencias, análisis interno, medición de uso, mejora de producto, entrenamiento o ajuste de sistemas internos en la medida permitida, defensa frente a reclamaciones, cumplimiento normativo y protección general de la plataforma y de su comunidad.",
+                        ],
+                    },
+                    {
+                        "title": "5. Bases jurídicas y legitimación",
+                        "paragraphs": [
+                            "El tratamiento puede apoyarse, según el caso, en la ejecución de la relación con la persona usuaria, el consentimiento que esta preste, el cumplimiento de obligaciones legales y el interés legítimo de dmander en operar, proteger, mantener, defender y mejorar la plataforma. Cada base podrá aplicarse de forma concurrente cuando resulte jurídicamente razonable.",
+                            "Cuando una funcionalidad dependa de un proveedor externo o de una integración concreta, la persona usuaria acepta que ciertos datos puedan ser comunicados o tratados por ese tercero en la medida necesaria para ejecutar la función solicitada o mantener operativa la plataforma.",
+                        ],
+                    },
+                    {
+                        "title": "6. Proveedores, transferencias y servicios de terceros",
+                        "paragraphs": [
+                            "dmander puede apoyarse en terceros proveedores para hosting, autenticación, mapas, correo, mensajería, IA, almacenamiento, analítica, observabilidad, seguridad, soporte o herramientas técnicas equivalentes. El uso del servicio implica aceptar que dichos proveedores puedan tratar información en nombre de dmander o bajo sus propios términos cuando el usuario interactúe directamente con ellos.",
+                            "Algunos proveedores podrán estar ubicados fuera del país de residencia del usuario. En la medida en que exista una transferencia internacional de datos, esta se realizará conforme a los mecanismos jurídicos que razonablemente resulten aplicables o habituales para ese tipo de servicios. dmander no garantiza que todos los terceros elegidos por el usuario mantengan idénticos niveles de protección en todas las jurisdicciones.",
+                        ],
+                    },
+                    {
+                        "title": "7. Conservación y retención",
+                        "paragraphs": [
+                            "Conservaremos la información durante el tiempo necesario para prestar el servicio, resolver incidencias, mantener la seguridad, defender intereses legítimos, prevenir fraude, atender obligaciones legales, preservar trazabilidad técnica o responder a solicitudes de autoridades, terceros legitimados o reclamaciones. El periodo exacto podrá variar según la naturaleza del dato, el uso que se haya hecho del servicio y el contexto operativo o legal aplicable.",
+                            "Incluso tras la baja de una cuenta o la supresión de una publicación, cierta información podrá mantenerse bloqueada, archivada, agregada, minimizada o pseudonimizada cuando resulte necesario por motivos técnicos, estadísticos, probatorios, de seguridad, auditoría, continuidad de servicio o cumplimiento normativo. La mera solicitud de borrado no comporta necesariamente una eliminación inmediata y absoluta de todas las huellas técnicas asociadas.",
+                        ],
+                    },
+                    {
+                        "title": "8. Seguridad de la información",
+                        "paragraphs": [
+                            "Aplicamos medidas técnicas y organizativas razonables para proteger la información frente a accesos no autorizados, pérdida, alteración, divulgación indebida o uso ilícito. No obstante, ningún sistema conectado a internet, servicio externo, proveedor cloud, canal de comunicación o flujo de autenticación puede ofrecer seguridad absoluta o disponibilidad perfecta.",
+                            "La persona usuaria reconoce y acepta el riesgo inherente al uso de servicios digitales, incluida la posibilidad de errores humanos, incidencias de terceros, brechas de seguridad, fallos de conectividad, vulnerabilidades no detectadas o usos indebidos cometidos por otros usuarios o atacantes. dmander no asume una obligación de resultado en materia de seguridad, sino una obligación razonable de diligencia según el contexto del servicio.",
+                        ],
+                    },
+                    {
+                        "title": "9. Información compartida por decisión del usuario",
+                        "paragraphs": [
+                            "Si una persona decide compartir voluntariamente su email, teléfono, usuario de Telegram, contacto de WhatsApp u otro canal externo, o continuar la conversación fuera de dmander, lo hará bajo su exclusiva responsabilidad. dmander no controla ni puede garantizar la seguridad, licitud, confidencialidad, trazabilidad o buen uso de ese intercambio fuera de la plataforma.",
+                            "La plataforma puede ofrecer mecanismos para facilitar el paso a canales externos, pero ello no supone recomendación, aval, supervisión continua ni garantía de que la comunicación ulterior vaya a desarrollarse con seguridad o conforme a las expectativas del usuario.",
+                        ],
+                    },
+                    {
+                        "title": "10. Derechos de las personas usuarias",
+                        "paragraphs": [
+                            "La persona usuaria podrá solicitar acceso, rectificación, supresión, oposición, limitación o portabilidad en la medida prevista por la normativa aplicable. dmander podrá requerir acreditación suficiente de identidad, información adicional o contexto mínimo para gestionar correctamente la solicitud y evitar accesos indebidos o actuaciones fraudulentas.",
+                            "No todas las solicitudes podrán atenderse de forma automática o absoluta. Cuando existan motivos legales, técnicos, de seguridad, prevención de fraude, defensa frente a reclamaciones o protección de otros usuarios, dmander podrá limitar, aplazar o denegar total o parcialmente determinadas peticiones conforme a lo permitido por la ley.",
+                        ],
+                    },
+                    {
+                        "title": "11. Menores, datos de terceros y uso indebido",
+                        "paragraphs": [
+                            "La plataforma no está diseñada para la publicación deliberada de datos personales de menores ni para el tratamiento de categorías especialmente sensibles sin una base legítima suficiente. Quien utilice dmander se compromete a no introducir datos de terceros sin autorización o cobertura jurídica adecuada, y a no emplear el servicio para revelar información privada de forma abusiva o ilegítima.",
+                            "Si detectamos actividad incompatible con el servicio, datos manifiestamente incorrectos, contenido ilícito o uso abusivo del producto, podremos revisar, limitar, bloquear, ocultar o eliminar la información afectada sin previo aviso cuando resulte razonablemente necesario.",
+                        ],
+                    },
+                    {
+                        "title": "12. Cambios en esta política y contacto",
+                        "paragraphs": [
+                            "dmander podrá actualizar esta política en cualquier momento para adaptarla a cambios legales, técnicos, operativos o de producto. La versión publicada en el sitio web será la aplicable en cada momento, y el uso continuado del servicio después de una modificación implicará la aceptación de la versión vigente.",
+                            "Para consultas generales relacionadas con esta política, el usuario podrá contactar a través de los canales de contacto publicados en el sitio. El envío de una consulta no implica por sí mismo un reconocimiento de derechos, una aceptación de pretensiones ni un compromiso de respuesta en un plazo concreto salvo obligación legal expresa.",
+                        ],
+                    },
+                ],
+            ),
+        )
+
+    @app.get("/terms-of-service", response_class=HTMLResponse)
+    async def terms_of_service_page(request: Request) -> HTMLResponse:
+        return _render(
+            request,
+            "legal_page.html",
+            _legal_page_context(
+                "Condiciones del Servicio",
+                "Condiciones del Servicio",
+                "dmander ofrece una infraestructura digital para publicar necesidades, recibir respuestas y conversar entre usuarios, pero no actúa como vendedor, empleador, representante, agencia, garante, asesor profesional ni parte contractual en los acuerdos que puedan surgir entre terceros.",
+                "El acceso, navegación o uso de la plataforma implica la aceptación plena de estas condiciones en su versión vigente. Si una persona no está de acuerdo con ellas, debe abstenerse de utilizar el servicio.",
+                lead=[
+                    "Estas condiciones están pensadas para regular el uso general de la plataforma, delimitar responsabilidades y dejar claro que dmander proporciona principalmente una capa tecnológica para facilitar publicaciones, respuestas y conversaciones. La existencia del servicio no transforma a dmander en garante del comportamiento de sus usuarios ni del resultado final de sus interacciones.",
+                    "Toda persona usuaria acepta que el servicio puede evolucionar, cambiar, suspender funcionalidades o modificar sus reglas de funcionamiento con el tiempo, especialmente mientras el producto continúe en desarrollo y adaptación comercial o técnica.",
+                ],
+                sections=[
+                    {
+                        "title": "1. Objeto y naturaleza del servicio",
+                        "paragraphs": [
+                            "La plataforma facilita un entorno digital para que distintas personas publiquen necesidades, respondan a las publicadas por otros y mantengan conversaciones relacionadas con dichas necesidades. dmander presta una infraestructura tecnológica y organizativa básica para ese intercambio, pero no garantiza cierres, acuerdos, ventas, contrataciones, reservas ni resultados concretos.",
+                            "Salvo indicación expresa y formal en contrario, dmander no actúa como revendedor, empleador, comisionista, representante, mediador con obligaciones fiduciarias, agencia de colocación, central de reservas, marketplace transaccional cerrado ni proveedor directo del bien o servicio buscado por un usuario.",
+                        ],
+                    },
+                    {
+                        "title": "2. Cuenta, acceso e identidad",
+                        "paragraphs": [
+                            "La persona usuaria es responsable de la veracidad, actualización y licitud de la información que facilita para crear una cuenta o interactuar en la plataforma. También es responsable de custodiar sus credenciales y de toda actividad realizada desde su sesión o identidad, salvo prueba suficiente de uso no autorizado imputable exclusivamente a un fallo grave de dmander.",
+                            "dmander podrá requerir verificaciones adicionales, suspender accesos, restringir funcionalidades o cancelar cuentas cuando existan indicios razonables de fraude, uso abusivo, suplantación, automatización no autorizada, incumplimiento de estas condiciones o riesgo operativo, legal o reputacional para el servicio.",
+                        ],
+                    },
+                    {
+                        "title": "3. Uso permitido y prohibiciones",
+                        "paragraphs": [
+                            "La persona usuaria se compromete a utilizar la plataforma para fines legítimos y de buena fe, a no publicar contenido ilícito, engañoso, abusivo, violento, difamatorio, fraudulento o invasivo de derechos de terceros, y a no emplear dmander para spam, scraping, extracción masiva, automatización abusiva, ingeniería inversa, suplantación, manipulación del servicio o actividades que puedan dañar a otros usuarios o a la propia plataforma.",
+                            "Queda prohibido utilizar dmander para fines contrarios a la ley, para ocultar identidades de forma fraudulenta, para generar actividad artificial, para recolectar contactos de terceros sin autorización o para publicar demandas, respuestas o mensajes manifiestamente falsos, inseguros o carentes de intención legítima.",
+                        ],
+                    },
+                    {
+                        "title": "4. Publicaciones, respuestas y conversaciones",
+                        "paragraphs": [
+                            "Cada usuario es el único responsable del contenido que publica, de las manifestaciones que realiza, de las ofertas o propuestas que formula, de las conversaciones que mantiene y de cualquier acuerdo, incumplimiento, reclamación, daño o disputa que derive de sus actuaciones dentro o fuera de la plataforma.",
+                            "dmander puede facilitar conversaciones o visibilidad entre partes, pero no valida sistemáticamente la exactitud, seriedad, solvencia, disponibilidad o idoneidad de los usuarios. La decisión de confiar, responder, contratar, comprar, vender, reservar, desplazarse, pagar o compartir datos externos corresponde exclusivamente a cada persona usuaria.",
+                        ],
+                    },
+                    {
+                        "title": "5. Ausencia de garantía sobre usuarios y resultados",
+                        "paragraphs": [
+                            "dmander no garantiza la identidad, solvencia, profesionalidad, disponibilidad, intención real, capacidad de pago, calidad, legalidad, seguridad, diligencia o buena fe de los usuarios, ni la veracidad, exactitud, integridad o actualidad de las demandas, respuestas, ofertas o mensajes publicados en el servicio.",
+                            "Tampoco garantiza que una demanda obtenga respuestas, que una respuesta sea adecuada, que una conversación culmine en acuerdo, que un acuerdo se cumpla, que un pago se efectúe, que una reserva se respete, que un trabajo se ejecute correctamente o que el resultado final satisfaga las expectativas de las partes.",
+                        ],
+                    },
+                    {
+                        "title": "6. No intermediación ni asesoramiento profesional",
+                        "paragraphs": [
+                            "Salvo indicación expresa y formal en contrario, dmander no actúa como parte contractual entre usuarios ni presta asesoramiento legal, laboral, fiscal, financiero, inmobiliario, técnico, médico o profesional de ningún tipo. Cualquier información mostrada, sugerida o inferida por la plataforma tiene naturaleza meramente funcional y no sustituye el criterio experto que pueda requerirse en cada caso.",
+                            "Toda decisión adoptada por los usuarios, incluido contratar, vender, comprar, reservar, compartir datos personales, desplazarse físicamente, aceptar un presupuesto o cerrar un acuerdo, se realiza bajo su exclusiva responsabilidad y riesgo.",
+                        ],
+                    },
+                    {
+                        "title": "7. Limitación de responsabilidad",
+                        "paragraphs": [
+                            "En la máxima medida permitida por la ley aplicable, dmander no será responsable de daños indirectos, incidentales, especiales, reputacionales, morales, emergentes o consecuenciales, ni de pérdida de beneficios, ingresos, ahorro esperado, oportunidad de negocio, clientela, datos o reputación derivados del uso o imposibilidad de uso de la plataforma.",
+                            "Tampoco responderá, en la máxima medida permitida, por acuerdos fallidos, impagos, cancelaciones, incumplimientos, errores de terceros, fraudes, conflictos entre usuarios, daños físicos o materiales, reservas frustradas, productos defectuosos, servicios mal ejecutados o cualquier conducta de terceros que se relacione, directa o indirectamente, con una interacción iniciada en dmander.",
+                        ],
+                    },
+                    {
+                        "title": "8. Disponibilidad, errores y evolución del producto",
+                        "paragraphs": [
+                            "El servicio puede experimentar caídas, errores, retrasos, indisponibilidad temporal, problemas de terceros, cambios de diseño, pérdida de funcionalidades, modificaciones de precio, cambios de alcance, límites de uso o ajustes técnicos que afecten a la experiencia de uso. dmander no garantiza disponibilidad permanente, continuidad ininterrumpida ni ausencia total de fallos.",
+                            "dmander podrá modificar, suspender, sustituir o retirar funcionalidades en cualquier momento, con o sin preaviso, especialmente mientras el producto continúe evolucionando. La continuidad de una funcionalidad concreta, integración, endpoint, panel o flujo de publicación no está garantizada salvo compromiso expreso por escrito.",
+                        ],
+                    },
+                    {
+                        "title": "9. Moderación, suspensión y terminación",
+                        "paragraphs": [
+                            "dmander podrá revisar, limitar, desindexar, pausar, ocultar o eliminar contenidos, cuentas, integraciones, filtros, tokens, accesos o automatizaciones cuando lo considere razonablemente necesario para proteger el servicio, cumplir la ley, atender requerimientos, prevenir abuso o reducir riesgos operativos, legales o reputacionales.",
+                            "La suspensión o cancelación de una cuenta podrá producirse incluso sin previo aviso cuando exista una razón razonable de seguridad, fraude, incumplimiento material, riesgo para terceros o necesidad urgente de preservar la integridad de la plataforma. Ello no generará, por sí solo, derecho a indemnización, reembolso o restitución automática.",
+                        ],
+                    },
+                    {
+                        "title": "10. Indemnidad",
+                        "paragraphs": [
+                            "La persona usuaria se compromete a mantener indemne a dmander, sus administradores, empleados, colaboradores y proveedores frente a reclamaciones, pérdidas, responsabilidades, costes, sanciones, daños, gastos razonables y honorarios derivados del uso indebido del servicio, del contenido publicado, de sus acuerdos con terceros, de la vulneración de derechos ajenos o del incumplimiento de estas condiciones.",
+                            "Esta obligación de indemnidad se extenderá, en la máxima medida permitida por la ley, a reclamaciones de terceros basadas en información falsa, contenido ilícito, conductas abusivas, incumplimientos contractuales entre usuarios o utilización no autorizada de datos personales o de propiedad intelectual.",
+                        ],
+                    },
+                    {
+                        "title": "11. Integraciones y servicios de terceros",
+                        "paragraphs": [
+                            "La plataforma puede apoyarse en terceros proveedores, modelos de IA, servicios de autenticación, correo, mensajería, mapas, hosting, almacenamiento, analítica o componentes externos equivalentes. dmander no responde por interrupciones, errores, pérdida de datos, latencias, indisponibilidad o daños derivados del funcionamiento de dichos terceros fuera de su control razonable.",
+                            "Cuando una funcionalidad dependa de condiciones, APIs, límites técnicos o políticas de un tercero, la continuidad y calidad de esa funcionalidad quedará sujeta también a dicho tercero. dmander podrá adaptarla, limitarla o retirarla cuando resulte necesario.",
+                        ],
+                    },
+                    {
+                        "title": "12. Cambios, ley aplicable y disposiciones finales",
+                        "paragraphs": [
+                            "dmander podrá modificar estas condiciones en cualquier momento para adaptarlas a cambios legales, técnicos, operativos o de producto. La versión publicada en la web será la vigente en cada momento y el uso continuado del servicio tras la actualización implicará la aceptación de la versión modificada.",
+                            "Si alguna cláusula fuera considerada inválida o inaplicable, ello no afectará al resto del documento, que seguirá plenamente vigente en la medida posible. La interpretación y aplicación de estas condiciones se someterá a la normativa y jurisdicción que resulte aplicable conforme a derecho y a la configuración concreta del servicio en cada momento.",
+                        ],
+                    },
+                ],
+            ),
+        )
+
+    @app.get("/api-plans", response_class=HTMLResponse)
+    async def api_plans_page(request: Request) -> HTMLResponse:
+        return _render(
+            request,
+            "info_page.html",
+            _info_page_context(
+                "API Plans",
+                "API Plans",
+                "La API de dmander está pensada para que agentes y automatizaciones puedan publicar demandas de forma segura y clara.",
+                "Ahora mismo el foco está en la publicación de demandas y en ayudar al agente a detectar qué información adicional puede mejorar el texto antes de publicarlo.",
+                feature_cards=[
+                    {
+                        "eyebrow": "API actual",
+                        "title": "Publicación asistida de demandas.",
+                        "items": [
+                            "Analizar un texto libre antes de publicarlo.",
+                            "Detectar ubicación y precio opcional si aparecen.",
+                            "Sugerir detalles adicionales que ayuden a mejorar las respuestas.",
+                        ],
+                    },
+                    {
+                        "eyebrow": "Dirección futura",
+                        "title": "Más capacidades para agentes y flujos automáticos.",
+                        "body": "Es razonable esperar más endpoints para conversación, gestión de demanda, integraciones y reporting a medida que el producto madure.",
+                    },
+                ],
+                detail_blocks=[
+                    {
+                        "title": "Enfoque ligero",
+                        "body": "La API sigue la misma filosofía que la web: texto libre primero, revisión opcional después.",
+                    },
+                    {
+                        "title": "Integración con agentes",
+                        "body": "Está orientada a que sistemas externos entiendan cuándo una demanda ya está lista para publicarse y cuándo conviene enriquecerla.",
+                    },
+                    {
+                        "title": "Planes",
+                        "body": "Por ahora esta página describe la dirección general del producto y no una tabla comercial cerrada de precios o límites.",
+                    },
+                ],
+            ),
         )
 
     @app.get("/app/chats", response_class=HTMLResponse)
@@ -1418,7 +1803,7 @@ def build_app() -> FastAPI:
                 "submit_action": "/demands",
                 "submit_label": "Analizar y continuar",
                 "page_title": "Publica lo que necesitas",
-                "page_note": "Escribe tu necesidad con libertad. Después podrás revisar el texto, la ubicación y el precio máximo si aplica.",
+                "page_note": _demand_wizard_page_note(active_wizard.get("suggested_missing_details") if active_wizard else None),
                 "initial_text": active_wizard["state"].original_text if active_wizard else "",
                 "edit_demand": None,
                 "auth_stage": "guest" if not user else "authenticated",
@@ -1449,7 +1834,7 @@ def build_app() -> FastAPI:
                 "submit_action": f"/demands/{demand_id}/edit",
                 "submit_label": "Analizar y actualizar",
                 "page_title": "Edita tu demanda",
-                "page_note": "Revisa el texto, la ubicación opcional y el precio máximo opcional antes de guardar.",
+                "page_note": _demand_wizard_page_note(active_wizard.get("suggested_missing_details") if active_wizard else None),
                 "initial_text": (active_wizard["state"].original_text if active_wizard else "") or demand.get("original_text") or demand.get("normalized_payload", {}).get("description", ""),
                 "edit_demand": demand,
             },
@@ -3060,6 +3445,74 @@ def _filter_suggested_missing_details(values: list[Any], limit: int = 4) -> list
     return _dedupe_text_items(filtered, limit=limit)
 
 
+def _looks_too_generic_for_publication(text: str) -> bool:
+    normalized = (
+        str(text or "")
+        .strip()
+        .lower()
+        .replace("á", "a")
+        .replace("é", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ú", "u")
+    )
+    if not normalized:
+        return True
+    generic_phrases = {
+        "publica lo que necesitas",
+        "lo que necesito",
+        "necesito algo",
+        "quiero algo",
+        "busco ayuda",
+        "quiero ayuda",
+        "quiero informacion",
+        "informacion",
+    }
+    if normalized in generic_phrases:
+        return True
+    tokens = [token for token in re.split(r"\W+", normalized) if token]
+    return len(tokens) <= 3
+
+
+def _fallback_suggested_missing_details(raw_text: str) -> list[str]:
+    if not _looks_too_generic_for_publication(raw_text):
+        return []
+    return [
+        "qué producto o servicio necesitas exactamente",
+        "alguna característica importante",
+    ]
+
+
+def _human_text_list(items: list[str]) -> str:
+    parts = [str(item or "").strip() for item in items if str(item or "").strip()]
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    if len(parts) == 2:
+        return f"{parts[0]} y {parts[1]}"
+    return f"{', '.join(parts[:-1])} y {parts[-1]}"
+
+
+def _demand_wizard_page_note(suggestions: list[str] | None = None) -> Markup:
+    cleaned = [str(item or "").strip() for item in (suggestions or []) if str(item or "").strip()]
+    if not cleaned:
+        return Markup("Revisa el texto, la ubicación y el precio máximo si aplica.")
+    if len(cleaned) == 1:
+        return Markup(
+            "Opcional: añade "
+            f"<strong>{escape(cleaned[0])}</strong>."
+        )
+    preview = ", ".join(f"<strong>{escape(item)}</strong>" for item in cleaned[:2])
+    if len(cleaned) > 2:
+        return Markup(
+            f"Opcional: añade {preview} u otros detalles que ayuden a afinar las respuestas."
+        )
+    return Markup(
+        f"Opcional: añade {preview}."
+    )
+
+
 def _fallback_demand_summary(raw_text: str) -> str:
     text = " ".join(str(raw_text or "").strip().split())
     if not text:
@@ -3152,6 +3605,8 @@ def _analyze_lightweight_demand(llm_client: Any, raw_text: str, known_fields: di
     suggestions = _filter_suggested_missing_details(
         list(normalized_known.get("suggested_missing_details") or []) + list(analysis.suggested_missing_details or [])
     )
+    if not suggestions:
+        suggestions = _fallback_suggested_missing_details(original_text)
     summary = str(analysis.summary or "").strip() or _fallback_demand_summary(original_text)
 
     known = {

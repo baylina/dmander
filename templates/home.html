@@ -5,23 +5,42 @@
   <section class="hero-home">
     <div class="hero-home-copy card">
       <p class="eyebrow">Marketplace de intención</p>
-      <h1>Publica lo que necesitas con texto libre y deja que el sistema te ayude a afinarlo.</h1>
-      <p class="hero-text">Sin categorías rígidas. Describe tu necesidad en lenguaje natural, revisa ubicación y precio máximo si aplica, y empieza a recibir respuestas.</p>
+      <h1>Publica lo que necesitas con un flujo claro, natural y mucho más ligero.</h1>
+      <p class="hero-text">Describe tu necesidad con tus palabras, ajusta ubicación o precio si te encaja y recibe respuestas sin perderte en formularios complejos.</p>
       <div class="hero-actions">
         <a href="/demands/new?fresh=1" class="button button-primary">Quiero publicar una demanda</a>
         <a href="#explorar-demandas" class="button button-ghost">Quiero ver demandas</a>
       </div>
-      <div class="hero-mini-points">
-        <span>Texto libre desde el primer momento</span>
-        <span>Ubicación y precio como atributos opcionales</span>
+      <div class="hero-home-proof">
+        <span class="hero-proof-pill">Texto libre desde el primer momento</span>
+        <span class="hero-proof-pill">Ubicación y precio opcionales</span>
+        <span class="hero-proof-pill">Respuesta directa por chat</span>
+      </div>
+      <div class="hero-home-stats">
+        <div class="hero-home-stat">
+          <strong>1</strong>
+          <span>texto para publicar</span>
+        </div>
+        <div class="hero-home-stat">
+          <strong>2</strong>
+          <span>atributos opcionales</span>
+        </div>
+        <div class="hero-home-stat">
+          <strong>100%</strong>
+          <span>mobile friendly</span>
+        </div>
       </div>
     </div>
 
     <div class="hero-home-composer card">
-      <p class="detail-label">Empieza gratis</p>
+      <div class="hero-home-composer-head">
+        <p class="detail-label">Empieza gratis</p>
+        <h2>Publica una necesidad en menos de un minuto</h2>
+        <p class="muted">No te pediremos registro hasta el final. Primero validamos contigo el texto, ubicación y precio si hacen falta.</p>
+      </div>
       <form action="/demands" method="post" class="form-stack js-busy-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <textarea name="demand_text" rows="6" maxlength="200" placeholder="Ej.: Quiero clases particulares de física para 2º de bachillerato en Sabadell..." required></textarea>
+        <textarea name="demand_text" rows="4" maxlength="200" placeholder="Ej.: Quiero clases particulares de física para 2º de bachillerato en Sabadell..." required></textarea>
         <button type="submit" class="button button-primary" data-busy-text="Analizando tu demanda...">
           <span class="button-label">Publicar mi primera demanda</span>
           <span class="button-spinner" aria-hidden="true"></span>
@@ -32,21 +51,13 @@
   </section>
 {% endif %}
 
-<section class="section-head" id="explorar-demandas">
-  <div>
-    <p class="eyebrow">Explorar</p>
-    <h1>{{ "Demandas publicadas" if current_user else "Últimas demandas publicadas" }}</h1>
-    <p class="section-note">Busca por lenguaje natural y filtra por ubicación para encontrar oportunidades reales.</p>
-  </div>
-</section>
-
-<section class="card search-card">
+<section class="card search-card" id="explorar-demandas">
   <form action="/" method="get" class="search-grid search-grid-home {{ 'has-saved-filters' if current_user and saved_filters else '' }}">
     {% if current_user and saved_filters %}
       <div class="search-field-stack search-field-stack-filters">
         <label>Mis filtros</label>
         <div class="saved-filter-inline">
-          <select name="saved_filter_id" onchange="this.form.submit()">
+          <select name="saved_filter_id" data-saved-filter-select>
             <option value="">Mis filtros</option>
             {% for item in saved_filters %}
               <option value="{{ item.id }}" {{ 'selected' if current_saved_filter and current_saved_filter.id == item.id else '' }}>{{ item.name }}</option>
@@ -99,9 +110,78 @@
       {% endif %}
     </div>
   </form>
+
+  {% if current_user and (has_active_search or saved_filters) %}
+    <div class="saved-filter-actions-bar">
+      {% if has_active_search %}
+        <button
+          type="button"
+          class="saved-filter-link"
+          data-open-filter-modal
+          data-save-label-default="Guardar filtro"
+          data-save-label-edit="Editar filtro"
+        >
+          {{ "Editar filtro" if current_saved_filter and search_matches_current_saved_filter else "Guardar filtro" }}
+        </button>
+      {% endif %}
+
+      {% if saved_filters %}
+        <a href="/app/filters" class="saved-filter-link">Gestionar filtros</a>
+      {% endif %}
+    </div>
+  {% endif %}
 </section>
 
+{% if current_user and has_active_search %}
+  <div class="filter-modal" data-filter-modal hidden>
+    <div class="filter-modal-backdrop" data-close-filter-modal></div>
+    <div class="filter-modal-panel">
+      <div class="filter-modal-head">
+        <div>
+          <strong>{{ "Editar filtro" if current_saved_filter and search_matches_current_saved_filter else "Guardar filtro" }}</strong>
+          <span class="small-note">Guarda esta búsqueda para reutilizarla más tarde.</span>
+        </div>
+        <button type="button" class="filter-modal-close" data-close-filter-modal>Cerrar</button>
+      </div>
+      <div class="filter-modal-body">
+        <form action="/filters" method="post" class="filter-modal-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="query_text" value="{{ search_filters.q }}">
+          <input type="hidden" name="location" value="{{ search_filters.location }}">
+          <input type="hidden" name="location_zone_json" value='{{ search_filters.location_zone_json }}'>
+          {% if current_saved_filter and search_matches_current_saved_filter %}
+            <input type="hidden" name="filter_id" value="{{ current_saved_filter.id }}">
+            <input type="hidden" name="save_mode" value="update">
+          {% else %}
+            <input type="hidden" name="save_mode" value="create">
+          {% endif %}
+
+          <label>
+            <span>Nombre del filtro</span>
+            <input
+              type="text"
+              name="name"
+              value="{{ current_saved_filter.name if current_saved_filter and search_matches_current_saved_filter else '' }}"
+              placeholder="Ej.: Clases de física en Sabadell"
+              required
+              data-filter-modal-name
+            >
+          </label>
+
+          <div class="filter-modal-actions">
+            <button type="button" class="button button-ghost" data-close-filter-modal>Cancelar</button>
+            <button type="submit" class="button button-primary">
+              {{ "Guardar cambios" if current_saved_filter and search_matches_current_saved_filter else "Guardar filtro" }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+{% endif %}
+
 <section class="home-results-head">
+  <h1>Últimas demandas publicadas</h1>
   <p class="small-note">{{ demands|length }} demandas en esta página{% if pagination.total_pages > 1 %} · página {{ pagination.page }} de {{ pagination.total_pages }}{% endif %}</p>
 </section>
 
@@ -113,6 +193,10 @@
     {% set has_geo = demand.location_json and demand.location_json.center and demand.location_json.center.lat is not none and demand.location_json.center.lon is not none %}
     <article class="card demand-feed-card" id="demand-{{ demand.id }}">
       <div class="demand-feed-main">
+        <div class="demand-feed-topline">
+          <span class="demand-feed-topline-pill">Demanda activa</span>
+          <span class="demand-feed-topline-date">{{ demand.created_at.strftime("%d/%m/%Y") if demand.created_at else "" }}</span>
+        </div>
         <div class="demand-feed-price{% if not budget_view.has_price %} is-empty{% endif %}">
           <div class="demand-feed-price-main">{{ budget_view.main }}</div>
           {% if budget_view.meta %}
@@ -127,7 +211,7 @@
             <span class="owner-icon" aria-hidden="true"></span>
             <span>{{ (demand.owner_name or "Usuario")[:18] }}</span>
           </span>
-          <span>{{ demand.created_at.strftime("%d/%m/%Y %H:%M") if demand.created_at else "" }}</span>
+          <span>{{ demand.created_at.strftime("%H:%M") if demand.created_at else "" }}</span>
           {% if city_label %}
             <span class="location-pill">
               <span class="location-icon" aria-hidden="true"></span>
@@ -192,17 +276,95 @@
     const defaultBounds = [[27.5, -18.5], [43.9, 4.8]];
     const searchInput = document.querySelector('[data-natural-search-input]');
     const searchClear = document.querySelector('[data-natural-search-clear]');
+    const savedFilterSelect = document.querySelector('[data-saved-filter-select]');
+    const filterModal = document.querySelector('[data-filter-modal]');
+    const openFilterModalButton = document.querySelector('[data-open-filter-modal]');
+    const filterModalNameInput = document.querySelector('[data-filter-modal-name]');
+    const filterModalCloseButtons = document.querySelectorAll('[data-close-filter-modal]');
+    const zoneSearchInput = document.querySelector('[data-zone-search]');
+    const zoneClearButtons = document.querySelectorAll('[data-zone-clear], [data-zone-summary-clear]');
+    const zoneApplyButton = document.querySelector('[data-zone-apply-modal]');
+    const zoneRadiusInputs = document.querySelectorAll('[data-zone-radius-option]');
+    const zoneJsonInput = document.querySelector('[data-zone-json]');
+
+    const clearSavedFilterSelection = () => {
+      if (!savedFilterSelect || !savedFilterSelect.value) return;
+      savedFilterSelect.value = '';
+      if (openFilterModalButton) {
+        openFilterModalButton.textContent = openFilterModalButton.dataset.saveLabelDefault || 'Guardar filtro';
+      }
+    };
 
     if (searchInput && searchClear) {
       const syncClear = () => {
         searchClear.hidden = !searchInput.value.trim();
       };
       syncClear();
-      searchInput.addEventListener('input', syncClear);
+      searchInput.addEventListener('input', () => {
+        syncClear();
+        clearSavedFilterSelection();
+      });
       searchClear.addEventListener('click', () => {
         searchInput.value = '';
         syncClear();
+        clearSavedFilterSelection();
         searchInput.form?.submit();
+      });
+    }
+
+    if (zoneSearchInput) {
+      zoneSearchInput.addEventListener('input', clearSavedFilterSelection);
+    }
+
+    zoneClearButtons.forEach((button) => {
+      button.addEventListener('click', clearSavedFilterSelection);
+    });
+
+    if (zoneApplyButton) {
+      zoneApplyButton.addEventListener('click', clearSavedFilterSelection);
+    }
+
+    zoneRadiusInputs.forEach((input) => {
+      input.addEventListener('change', clearSavedFilterSelection);
+    });
+
+    if (zoneJsonInput) {
+      zoneJsonInput.addEventListener('change', clearSavedFilterSelection);
+    }
+
+    if (savedFilterSelect) {
+      savedFilterSelect.addEventListener('change', () => {
+        const value = savedFilterSelect.value.trim();
+        if (!value) {
+          window.location.href = '/';
+          return;
+        }
+        const target = new URL(window.location.origin + '/');
+        target.searchParams.set('saved_filter_id', value);
+        window.location.href = target.toString();
+      });
+    }
+
+    if (filterModal && openFilterModalButton) {
+      const openFilterModal = () => {
+        filterModal.hidden = false;
+        document.body.classList.add('modal-open');
+        window.setTimeout(() => filterModalNameInput?.focus(), 40);
+      };
+
+      const closeFilterModal = () => {
+        filterModal.hidden = true;
+        document.body.classList.remove('modal-open');
+      };
+
+      openFilterModalButton.addEventListener('click', openFilterModal);
+      filterModalCloseButtons.forEach((button) => {
+        button.addEventListener('click', closeFilterModal);
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && !filterModal.hidden) {
+          closeFilterModal();
+        }
       });
     }
 

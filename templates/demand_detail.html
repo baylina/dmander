@@ -10,15 +10,8 @@
 
 <section class="detail-layout detail-layout-modern{% if current_user and demand.is_owner %} detail-layout-owner{% endif %}">
   <article class="card detail-main-card">
-    <div class="detail-price-block{% if not budget_view.has_price %} is-empty{% endif %}">
-      <div class="detail-price-main">{{ budget_view.main }}</div>
-      {% if budget_view.meta %}
-        <div class="detail-price-meta">{{ budget_view.meta }}</div>
-      {% endif %}
-    </div>
-
-    <div class="detail-title-block">
-      <p class="eyebrow">
+    <div class="detail-main-topline">
+      <span class="detail-main-pill">
         {% if demand.effective_status == "open" %}
           Demanda activa
         {% elif demand.effective_status == "paused" %}
@@ -28,7 +21,19 @@
         {% else %}
           Demanda
         {% endif %}
-      </p>
+      </span>
+      <span class="detail-main-date">{{ demand.created_at.strftime("%d/%m/%Y · %H:%M") if demand.created_at else "" }}</span>
+    </div>
+
+    <div class="detail-price-block{% if not budget_view.has_price %} is-empty{% endif %}">
+      <div class="detail-price-main">{{ budget_view.main }}</div>
+      {% if budget_view.meta %}
+        <div class="detail-price-meta">{{ budget_view.meta }}</div>
+      {% endif %}
+    </div>
+
+    <div class="detail-title-block">
+      <p class="eyebrow">Necesidad publicada</p>
       <h1 class="detail-description-title">{{ demand_text }}</h1>
       {% if demand.location_display or demand.location_label or demand.location %}
         <div class="detail-inline-meta">
@@ -65,7 +70,7 @@
       <div class="detail-info-card">
         <span class="detail-label">Publicado por</span>
         <strong>{{ demand.owner_name }}</strong>
-        <span class="detail-card-meta">{{ demand.created_at.strftime("%d/%m/%Y %H:%M") if demand.created_at else "Sin fecha" }}</span>
+        <span class="detail-card-meta">Demanda pública en dmander</span>
       </div>
       <div class="detail-info-card">
         <span class="detail-label">Ofertas recibidas</span>
@@ -106,19 +111,6 @@
       </div>
     </div>
 
-    {% if current_user and demand.is_owner %}
-      <section class="detail-owner-offers">
-        <h2>Ofertas recibidas</h2>
-        {% if demand.offer_count %}
-          <div class="detail-owner-offers-summary">
-            <p>Tienes {{ demand.offer_count }} oferta{{ '' if demand.offer_count == 1 else 's' }} recibida{{ '' if demand.offer_count == 1 else 's' }} para esta demanda.</p>
-            <a href="/app/chats?role=owner&demand_id={{ demand.id }}{% if owner_selected_offer_id %}&offer_id={{ owner_selected_offer_id }}{% endif %}" class="button button-primary">Ver ofertas y conversaciones</a>
-          </div>
-        {% else %}
-          <div class="empty-inline">Todavía no has recibido ofertas para esta demanda.</div>
-        {% endif %}
-      </section>
-    {% endif %}
   </article>
 
   {% if not (current_user and demand.is_owner) %}

@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="section-head">
+  <div>
+    {% if page_eyebrow %}
+      <p class="eyebrow">{{ page_eyebrow }}</p>
+    {% endif %}
+    <h1>{{ page_heading }}</h1>
+    {% if page_intro %}
+      <p class="section-note">{{ page_intro }}</p>
+    {% endif %}
+  </div>
+</section>
+
+{% if feature_cards %}
+  <section class="how-layout">
+    {% for card in feature_cards %}
+      <article class="card info-panel">
+        {% if card.eyebrow %}
+          <p class="eyebrow">{{ card.eyebrow }}</p>
+        {% endif %}
+        <h2>{{ card.title }}</h2>
+        {% if card.body %}
+          <p class="muted">{{ card.body }}</p>
+        {% endif %}
+        {% set card_items = card.get("items") %}
+        {% if card_items %}
+          <ul class="entry-steps">
+            {% for item in card_items %}
+              <li>{{ item }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+        {% if card.cta_href and card.cta_label %}
+          <a href="{{ card.cta_href }}" class="button {{ card.cta_variant or 'button-ghost' }}">{{ card.cta_label }}</a>
+        {% endif %}
+      </article>
+    {% endfor %}
+  </section>
+{% endif %}
+
+{% if detail_blocks %}
+  <section class="steps-grid">
+    {% for block in detail_blocks %}
+      <article class="card step-card">
+        <strong>{{ block.title }}</strong>
+        <p class="muted">{{ block.body }}</p>
+      </article>
+    {% endfor %}
+  </section>
+{% endif %}
+{% endblock %}
